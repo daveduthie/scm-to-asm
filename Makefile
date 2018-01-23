@@ -21,7 +21,7 @@ ifeq ($(PLATFORM),Darwin)
   FORMAT=macho64
   NASM=/usr/local/bin/nasm
   CC=/usr/local/bin/gcc-7
-  # NASM_PREFIX= --prefix _
+  NASM_PREFIX= --prefix _
 endif
 
 CFLAGS= -m64 -g -fomit-frame-pointer -Wall -pedantic
