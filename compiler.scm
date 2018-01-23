@@ -2,15 +2,15 @@
 (load "tests-1.1-req.scm")
 (load "tests-1.2-req.scm")
 
-;; Fixnum mask => ------------------------------11
+;; Fixnum shape => ------------------------------11
 (define fixnum-shift 2)
-;; Char mask   => ------------------------00001111
+;; Char shape   => ------------------------00001111
 (define char-shift 8)
 (define char-tag #b00001111)
-;; Bool mask   =>                         _0011111
+;; Bool shape   =>                         _0011111
 (define bool-t #b10011111)
 (define bool-f #b00011111)
-;; Empty list  =>                         00101111
+;; Empty list   =>                         00101111
 (define empty-list #b00101111)
 
 (define (emit-program x)
