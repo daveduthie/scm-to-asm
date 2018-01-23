@@ -22,16 +22,14 @@ extern int scheme_entry();
 
 
 const char *ascii_table[0x7F] = {
-  "nul",       "soh",    "stx",     "etx",   "eot", "enq",    "ack",  "bel",
-  "bs", "tab",    "newline", "vt",    "ff",  "return", "so",   "si",
-  "dle",       "dc1",    "dc2",     "dc3",   "dc4", "nak",    "syn",  "etb",
-  "can",       "em",     "sub",     "esc",   "fs",  "gs",     "rs",   "us",
+  "nul",    "soh",    "stx",     "etx",    "eot",    "enq",    "ack",    "bel",
+  "bs",     "tab",    "newline", "vt",     "ff",     "return", "so",     "si",
+  "dle",    "dc1",    "dc2",     "dc3",    "dc4",    "nak",    "syn",    "etb",
+  "can",    "em",     "sub",     "esc",    "fs",     "gs",     "rs",     "us",
   "space"
 };
 
-int main(int argc, char** argv) {
-  int val = scheme_entry();
-
+static void prn(int val){
   if((val & fixnum_mask) == fixnum_tag){
     printf("%d", val >> fixnum_shift);
   } else if (val == bool_t){
@@ -44,11 +42,9 @@ int main(int argc, char** argv) {
     char c = (val >> char_shift);
     if (iscntrl(c) || isspace(c)) {
       printf("#\\%s", ascii_table[(unsigned char)c]);
-    /* } else if (strncmp(&c, "\\\\", 2)) { */
-    /*   printf("#\\\\%c", c); */
     } else if (strncmp(&c, "\\", 1)) {
       printf("#\\%c", c);
-      } else {
+    } else {
       printf("%c", c);
     }
   } else {
@@ -56,5 +52,10 @@ int main(int argc, char** argv) {
   }
   printf("\n");
 
+}
+
+int main(int argc, char** argv) {
+  int val = scheme_entry();
+  prn(val);
   return 0;
 }

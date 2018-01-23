@@ -19,7 +19,6 @@
      [(integer? x)   (ash x fixnum-shift)]
      [(boolean? x)   (if x bool-t bool-f)]
      [(equal? x '()) empty-list]
-     [(string? x) (error 'emit-program "Cannot deal with sttring yet!" x)]
      [(char? x)      (bitwise-ior (ash (char->integer x) char-shift) char-tag)]
      [else           (error 'emit-program "Cannot find representation for this element: " x)]))
   (emit "global scheme_entry")
