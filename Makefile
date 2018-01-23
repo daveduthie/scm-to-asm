@@ -41,5 +41,8 @@ clean:
 test:
 	ENTRY=$(ENTRY) $(SCHEME) --script auto.scm
 
+watch-test: stst
+	watchexec -c -r -e scm,c 'ENTRY=$(ENTRY) $(SCHEME) --script auto.scm'
+
 .PHONY: build clean test
 .SILENT: build clean test stst stst.o
