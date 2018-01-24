@@ -1,9 +1,16 @@
-(load "tests-driver.scm")
+(load "util.scm")
+
 (load "tests-1.1-req.scm")
 (load "tests-1.2-req.scm")
 (load "tests-1.3-req.scm")
+(load "tests-1.4-req.scm")
+
 
 ;;;; Helpers ----------------------------------------------------------------
+
+(define (emit . args)
+  (display (apply format args))
+  (newline))
 
 ;; Fixnum shape => ------------------------------11
 (define fixnum-shift 2)
@@ -12,8 +19,8 @@
 
 ;; Char shape   => ------------------------00001111
 (define char-shift 8)
+(define char-tag  #b00001111)
 (define char-mask #b11111111)
-(define char-tag #b00001111)
 ;; Bool shape   =>                         _0011111
 (define bool-shift 7)
 (define bool-t #b10011111)
@@ -44,7 +51,7 @@
    [else           (error 'emit-program "Cannot find representation for this element: " x)]))
 
 (define (emit-immediate x)
-  (emit "  mov rax, ~s" (immediate-rep x)))
+  (emit "  mov eax, ~s" (immediate-rep x)))
 
 ;;;; Primitive calls ----------------------------------------------------------------
 
@@ -75,77 +82,71 @@
 
 (define-primitive (fxadd1 arg)
   (emit-expr arg)
-  (emit "  add rax, ~s" (immediate-rep 1)))
+  (emit "  add eax, ~s" (immediate-rep 1)))
 
 (define-primitive (fxsub1 arg)
   (emit-expr arg)
-  (emit "  sub rax, ~s" (immediate-rep 1)))
+  (emit "  sub eax, ~s" (immediate-rep 1)))
 
 (define-primitive (fixnum->char arg)
   (emit-expr arg)
-  (emit "  shl rax, ~s" (- char-shift fixnum-shift))
-  (emit "  or rax, ~s" char-tag))
+  (emit "  shl eax, ~s" (- char-shift fixnum-shift))
+  (emit "  or eax, ~s" char-tag))
 
 (define-primitive (char->fixnum arg)
   (emit-expr arg)
-  (emit "  shr rax, ~s" char-shift)
-  (emit "  shl rax, ~s" fixnum-shift))
+  (emit "  shr eax, ~s" char-shift)
+  (emit "  shl eax, ~s" fixnum-shift))
 
-(define-primitive (fixnum? arg)
-  (emit-expr arg)
-  (emit "  and rax, ~s" fixnum-mask)
-  (emit "  setz al")
-  (emit "  movzx rax, al")
-  (emit "  shl rax, ~s" bool-shift)
-  (emit "  or rax, ~s" bool-tag))
+;;; Many primitives are unary predicates which return true or false.
+;;; This macro factors out some of the boilerplate for these predicates.
+;;; To implement a new predicate, it is enough to emit assembly which checks the value in eax/rax and sets the lsb in al: 1 -> #t or 0 -> #f
+;;; See below for examples
+(define-syntax define-predicate
+  (syntax-rules ()
+    [(_ (prim-name arg) b b* ...)
+     (begin
+       (putprop 'prim-name '*is-prim* #t)
+       (putprop 'prim-name '*arg-count* 1)
+       (putprop 'prim-name '*emitter*
+                (lambda (arg)
+                  (emit-expr arg)
+                  b b* ...
+                  (emit "  movzx eax, al")
+                  (emit "  shl eax, ~s" bool-shift)
+                  (emit "  or eax, ~s" bool-tag))))]))
 
-(define-primitive (fxzero? arg)
-  (emit-expr arg)
-  (emit "  cmp rax, ~s" fixnum-tag)
-  (emit "  sete al")
-  (emit "  movzx rax, al")
-  (emit "  shl rax, ~s" bool-shift)
-  (emit "  or rax, ~s" bool-tag))
+(define-predicate (fixnum? arg)
+  (emit "  and eax, ~s" fixnum-mask)
+  (emit "  setz al"))
 
-(define-primitive (null? arg)
-  (emit-expr arg)
-  (emit "  cmp rax, ~s" empty-list)
-  (emit "  sete al")
-  (emit "  movzx rax, al")
-  (emit "  shl rax, ~s" bool-shift)
-  (emit "  or rax, ~s" bool-tag))
+(define-predicate (fxzero? arg)
+  (emit "  cmp eax, ~s" fixnum-tag)
+  (emit "  sete al"))
 
-(define-primitive (boolean? arg)
-  (emit-expr arg)
-  (emit "  and rax, ~s" bool-mask)
-  (emit "  cmp rax, ~s" bool-tag)
-  (emit "  sete al")
-  (emit "  movzx rax, al")
-  (emit "  shl rax, ~s" bool-shift)
-  (emit "  or rax, ~s" bool-tag))
+(define-predicate (null? arg)
+  (emit "  cmp eax, ~s" empty-list)
+  (emit "  sete al"))
 
-(define-primitive (char? arg)
-  (emit-expr arg)
-  (emit "  and rax, ~s" char-mask)
-  (emit "  cmp rax, ~s" char-tag)
-  (emit "  sete al")
-  (emit "  movzx rax, al")
-  (emit "  shl rax, ~s" bool-shift)
-  (emit "  or rax, ~s" bool-tag))
+(define-predicate (boolean? arg)
+  (emit "  and eax, ~s" bool-mask)
+  (emit "  cmp eax, ~s" bool-tag)
+  (emit "  sete al"))
+
+(define-predicate (char? arg)
+  (emit "  and eax, ~s" char-mask)
+  (emit "  cmp eax, ~s" char-tag)
+  (emit "  setz al"))
 
 
-(define-primitive (not arg)
-  (emit-expr arg)
-  (emit "  cmp rax, ~s" bool-f)
-  (emit "  sete al")
-  (emit "  movzx rax, al")
-  (emit "  shl rax, ~s" bool-shift)
-  (emit "  or rax, ~s" bool-tag))
+(define-predicate (not arg)
+  (emit "  cmp eax, ~s" bool-f)
+  (emit "  sete al"))
 
 (define-primitive (fxlognot arg)
   (emit-expr arg)
-  (emit "  or rax, ~s" fixnum-mask)
-  (emit "  not rax"))
+  (emit "  or eax, ~s" fixnum-mask)
+  (emit "  not eax"))
 
 (define (emit-expr expr)
   (cond [(immediate? expr) (emit-immediate expr)]

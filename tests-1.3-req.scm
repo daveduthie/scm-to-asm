@@ -89,6 +89,7 @@
    [(char? 0) => "#f\n"]
    [(char? 23870) => "#f\n"]
    [(char? -23789) => "#f\n"]
+   [(char? (fixnum->char 65)) => "#t\n"]
 )
 
 (add-tests-with-string-output "not"

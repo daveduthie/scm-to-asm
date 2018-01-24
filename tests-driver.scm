@@ -1,3 +1,6 @@
+(load "util.scm")
+
+(define cached-asm (make-eqv-hashtable 100))
 
 (define all-tests '())
 
@@ -9,52 +12,21 @@
            '(test-name [expr string output-string] ...)
             all-tests))]))
 
-;(define (run-compile expr)
-;  (let ([p (open-output-file "stst.s" 'replace)])
-;    (emit-program expr p)
-;    (close-output-port p)))
-
 (define (build)
   (unless (zero? (system "make"))
-    (error 'make "could not build target")))
-
-;(define (execute)
-;  (unless (zero? (system "./stst > stst.out"))
-;    (error 'make "produced program exited abnormally")))
-
-
-;(define (build-program expr)
-;   (run-compile expr)
-;   (build))
-
-;(define (get-string)
-;  (with-output-to-string
-;    (lambda ()
-;      (with-input-from-file "stst.out"
-;        (lambda ()
-;          (let f ()
-;            (let ([c (read-char)])
-;              (cond
-;               [(eof-object? c) (void)]
-;               [else (display c) (f)]))))))))
-;
-;(define (test-with-string-output test-id expr expected-output)
-;   (run-compile expr)
-;   (build)
-;   (execute)
-;   (unless (string=? expected-output (get-string))
-;     (error 'test "output mismatch for test ~s, expected ~s, got ~s"
-;        test-id expected-output (get-string))))
+    (error 'build "could not build target")))
 
 (define (test-one test-id test)
   (let ([expr (car test)]
         [type (cadr test)]
         [out  (caddr test)])
+    (printf (random-element colours))
     (printf "test ~s:~s ..." test-id expr)
+    (printf "\033[0m")
     (flush-output-port)
     (case type
      [(string) (test-with-string-output test-id expr out)]
-     [else (errorf 'test "invalid test type ~s" type)])
+     [else (error 'test-one "invalid test type" type)])
     (printf " ok\n")))
 
 (define (test-all)
@@ -78,10 +50,10 @@
   (make-parameter (lambda (x) x)
     (lambda (x)
       (unless (procedure? x)
-        (errorf 'input-filter "not a procedure ~s" x))
+        (error 'input-filter "not a procedure" x))
       x)))
 
-(define runtime-file 
+(define runtime-file
   (make-parameter
     "runtime.c"
     (lambda (fname)
@@ -93,16 +65,20 @@
   (make-parameter
     (current-output-port)
     (lambda (p)
-       (unless (output-port? p) 
+       (unless (output-port? p)
          (errorf 'compile-port "not an output port ~s" p))
        p)))
 
 (define show-compiler-output (make-parameter #f))
 
 (define (run-compile expr)
+  (with-output-to-string
+    (lambda ()
+      (emit-program expr))))
+
+(define (write-to-asm-file asm)
   (let ([p (open-output-file "stst.s" 'replace)])
-    (parameterize ([compile-port p])
-       (emit-program expr))
+    (fprintf p asm)
     (close-output-port p)))
 
 
@@ -110,10 +86,10 @@
   (unless (fxzero? (system "./stst > stst.out"))
     (error 'execute "produced program exited abnormally")))
 
-(define (get-string)
+(define (get-string file-name)
   (with-output-to-string
     (lambda ()
-      (with-input-from-file "stst.out"
+      (with-input-from-file file-name
         (lambda ()
           (let f ()
             (let ([c (read-char)])
@@ -122,14 +98,50 @@
                [else (display c) (f)]))))))))
 
 (define (test-with-string-output test-id expr expected-output)
-   (run-compile expr)
-   (build)
-   (execute)
-   (unless (string=? expected-output (get-string))
-     (errorf 'test "output mismatch for test ~s, expected ~s, got ~s"
-        test-id expected-output (get-string))))
+  (let [(asm (run-compile expr))
+        (cached (hashtable-ref cached-asm test-id ""))]
+    (unless (string=? asm cached)
+      (write-to-asm-file asm) ; write to stst.s
+      (build)
+      (execute)
+      (let [(output (get-string "stst.out"))]
+        (if (string=? expected-output output)
+            (hashtable-set! cached-asm test-id asm)
+            (begin
+              (hashtable-set! cached-asm test-id "")
+              (errorf 'test "output mismatch for test ~s, expected ~s, got ~s"
+                      test-id expected-output output)))))))
 
-(define (emit . args)
-  (apply fprintf (compile-port) args)
-  (newline (compile-port)))
 
+(define (retest?)
+  (let [(r (get-string "retest"))]
+    (case r
+      ["true\n" (begin (system "./retest-false") #t)]
+      ["false\n" #f]
+      [else (error 'retest? "Halting retest loop" r)])))
+
+(define sleep-duration (make-time 'time-duration 0 1))
+
+(define (test-all-loop)
+  (sleep sleep-duration)
+  (if (retest?)
+      (begin (set! all-tests '())
+             (load "compiler.scm")
+             (test-all)))
+
+  (test-all-loop))
+
+(define (handle-stuff)
+  (guard (exn
+          ((condition? exn)
+           (newline)
+           (if (message-condition? exn)
+               (printf (condition-message exn))
+               (printf "Ouch!"))
+           (newline)
+           (printf (random-element colours))
+           (display (current-time))
+           (newline)
+           (printf "\033[0m")
+           (handle-stuff)))
+    (test-all-loop)))
