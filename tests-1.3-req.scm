@@ -1,6 +1,3 @@
-
-
-
 (add-tests-with-string-output "fxadd1"
   [(fxadd1 0) => "1\n"]
   [(fxadd1 -1) => "0\n"]
@@ -11,6 +8,8 @@
   [(fxadd1 -536870912) => "-536870911\n"]
   [(fxadd1 (fxadd1 0)) => "2\n"]
   [(fxadd1 (fxadd1 (fxadd1 (fxadd1 (fxadd1 (fxadd1 12)))))) => "18\n"]
+  [(fxsub1 1000) => "999\n"]
+  [(fxsub1 -555) => "-556\n"]
   )
 
 (add-tests-with-string-output "fixnum->char and char->fixnum"

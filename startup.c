@@ -41,11 +41,15 @@ static void prn(int val){
   } else if ((val & char_mask) == char_tag){
     char c = (val >> char_shift);
     if (iscntrl(c) || isspace(c)) {
-      printf("#\\%s", ascii_table[(unsigned char)c]);
-    } else if (strncmp(&c, "\\", 1)) {
-      printf("#\\%c", c);
+      if ((int)c == 127) {
+        printf("#\\del");
+      } else {
+        printf("#\\%s", ascii_table[(unsigned char)c]);
+      }
+    } else if (!(strcmp(&c, "\\\\"))) {
+      printf("#\\\\");
     } else {
-      printf("%c", c);
+      printf("#\\%c", c);
     }
   } else {
     printf("FAIL!");
