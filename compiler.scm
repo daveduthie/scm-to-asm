@@ -151,7 +151,7 @@
 (define (emit-expr expr)
   (cond [(immediate? expr) (emit-immediate expr)]
         [(primcall? expr) (emit-primcall expr)]
-        [else (error 'emit-expr "Cannot encode this peanut:" expr)]))
+        [else (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
 
 (define (emit-header)
   (emit "global scheme_entry")

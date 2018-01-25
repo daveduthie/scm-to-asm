@@ -141,7 +141,7 @@
            (newline)
            (printf (random-element colours))
            (display (current-time))
-           (newline)
            (printf "\033[0m")
+           (newline)
            (handle-stuff)))
     (test-all-loop)))
