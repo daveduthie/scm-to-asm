@@ -108,7 +108,6 @@
         (if (string=? expected-output output)
             (hashtable-set! cached-asm test-id asm)
             (begin
-              (hashtable-set! cached-asm test-id "")
               (errorf 'test "output mismatch for test ~s, expected ~s, got ~s"
                       test-id expected-output output)))))))
 
