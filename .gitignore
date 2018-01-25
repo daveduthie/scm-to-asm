@@ -1,1 +1,4 @@
 .DS_Store
+/retest
+/stst*
+/stst.dSYM/Contents/Info.plist
