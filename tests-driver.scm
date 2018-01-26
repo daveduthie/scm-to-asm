@@ -107,9 +107,8 @@
       (let [(output (get-string "stst.out"))]
         (if (string=? expected-output output)
             (hashtable-set! cached-asm test-id asm)
-            (begin
-              (errorf 'test "output mismatch for test ~s, expected ~s, got ~s"
-                      test-id expected-output output)))))))
+            (error 'test (format "Failed test ~a ~%expected: ~s ~%got ~s"
+                                 test-id expected-output output)))))))
 
 
 (define (retest?)
