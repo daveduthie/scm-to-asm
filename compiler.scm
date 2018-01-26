@@ -100,7 +100,8 @@
 
 ;;; Many primitives are unary predicates which return true or false.
 ;;; This macro factors out some of the boilerplate for these predicates.
-;;; To implement a new predicate, it is enough to emit assembly which checks the value in eax/rax and sets the lsb in al: 1 -> #t or 0 -> #f
+;;; To implement a new predicate, it is enough to emit assembly which
+;;; checks the value in eax/rax and sets the lsb in al: 1 -> #t or 0 -> #f
 ;;; See below for examples
 (define-syntax define-predicate
   (syntax-rules ()

@@ -102,8 +102,8 @@
         (cached (hashtable-ref cached-asm test-id ""))]
     (unless (string=? asm cached)
       (write-to-asm-file asm) ; write to stst.s
-      (build)
-      (execute)
+      (build)                 ; assemble, compile, link
+      (execute)               ; ./stst > stst.out
       (let [(output (get-string "stst.out"))]
         (if (string=? expected-output output)
             (hashtable-set! cached-asm test-id asm)
