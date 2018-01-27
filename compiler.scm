@@ -29,7 +29,7 @@
 (define bool-mask #b1111111)
 ;; Empty list   =>                         00101111
 (define empty-list #b00101111)
-(define nil #b00101111)
+(define nil empty-list)
 
 ;;;; Immediate values ----------------------------------------------------------------
 
