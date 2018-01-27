@@ -197,12 +197,24 @@
         #t
         `(if ,(car i) ,(conseq (cdr i)) #f))))
 
+;;;; Or form ----------------------------------------------------------------
+
+(define (transform-or expr)
+  (let alternate ([i (cdr expr)])
+    (if (null? i)
+        #f
+        `(if ,(car i) #t ,(alternate (cdr i))))))
+
+(define (or? expr)
+  (equal? (car expr) 'or))
+
 ;;;; Compiler ----------------------------------------------------------------
 
 (define (emit-expr expr)
   (cond [(immediate? expr) (emit-immediate expr)]
         [(if? expr)        (emit-if expr)]
         [(and? expr)       (emit-if (transform-and expr))]
+        [(or? expr)        (emit-if (transform-or expr))]
         [(primcall? expr)  (emit-primcall expr)]
         [else              (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
 
