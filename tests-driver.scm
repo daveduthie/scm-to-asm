@@ -29,7 +29,11 @@
      [else (error 'test-one "invalid test type" type)])
     (printf " ok\n")))
 
-(define (test-all)
+(define (ttest-all)
+  ;; clean tests
+  (set! all-tests '())
+  ;; reload compiler (also bringing in tests)
+  (load "compiler.scm")
   (let f ([i 0] [ls (reverse all-tests)])
     (if (null? ls)
         (printf "passed all ~s tests\n" i)
@@ -120,14 +124,10 @@
 
 (define sleep-duration (make-time 'time-duration 0 1))
 
-(define (test-all-loop)
+(define (lloop-test)
   (sleep sleep-duration)
-  (if (retest?)
-      (begin (set! all-tests '())
-             (load "compiler.scm")
-             (test-all)))
-
-  (test-all-loop))
+  (if (retest?) (ttest-all))
+  (lloop-test))
 
 (define (handle-stuff)
   (guard (exn
@@ -142,4 +142,4 @@
            (printf "\033[0m")
            (newline)
            (handle-stuff)))
-    (test-all-loop)))
+    (lloop-test)))
