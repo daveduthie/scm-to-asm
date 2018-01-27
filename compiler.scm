@@ -29,6 +29,7 @@
 (define bool-mask #b1111111)
 ;; Empty list   =>                         00101111
 (define empty-list #b00101111)
+(define nil #b00101111)
 
 ;;;; Immediate values ----------------------------------------------------------------
 
@@ -149,10 +150,61 @@
   (emit "  or eax, ~s" fixnum-mask)
   (emit "  not eax"))
 
+;;;; If form ----------------------------------------------------------------
+
+;;; Require programmatic access to unique labels
+(define unique-label
+  (let ([count 0])
+    (lambda ()
+      (let ([L (format "L_~s" count)])
+        (set! count (add1 count))
+        L))))
+
+(define (if? expr)
+  (equal? (car expr) 'if))
+
+(define (emit-if expr)
+  ;; (printf "CALLED IF ~s ~%" expr)
+  (let ([test (cadr expr)]
+        [consequent (caddr expr)]
+        [alternate (cadddr expr)]
+        [alt-label (unique-label)]
+        [end-label (unique-label)])
+    (emit ";;;; ~s:~s:~s" test consequent alternate)
+    (emit-expr test)
+    (emit "  cmp eax, ~s ; cmp #f" bool-f)
+    (emit "  je ~a" alt-label)
+    (emit "  cmp eax, ~s ; cmp ()" nil)
+    (emit "  je ~a" alt-label)
+    (emit-expr consequent)
+    (emit "  jmp ~a" end-label)
+    (emit "~a: ; alt" alt-label)
+    (emit-expr alternate)
+    (emit "~a: ; end" end-label)))
+
+;;;; And form ----------------------------------------------------------------
+
+(define (and? expr)
+  (equal? (car expr) 'and))
+
+;; TODO: Study this macro
+;; Transform an and expression into a nested if expression.
+;; (and a b ...)
+;; (if a (if b #t #f) #f)
+(define (transform-and expr)
+  (let conseq ([i (cdr expr)])
+    (if (null? i)
+        #t
+        `(if ,(car i) ,(conseq (cdr i)) #f))))
+
+;;;; Compiler ----------------------------------------------------------------
+
 (define (emit-expr expr)
   (cond [(immediate? expr) (emit-immediate expr)]
-        [(primcall? expr) (emit-primcall expr)]
-        [else (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
+        [(if? expr)        (emit-if expr)]
+        [(and? expr)       (emit-if (transform-and expr))]
+        [(primcall? expr)  (emit-primcall expr)]
+        [else              (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
 
 (define (emit-header)
   (emit "global scheme_entry")
