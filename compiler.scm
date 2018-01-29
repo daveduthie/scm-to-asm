@@ -102,44 +102,39 @@
 ;;; Many primitives are unary predicates which return true or false.
 ;;; This macro factors out some of the boilerplate for these predicates.
 ;;; To implement a new predicate, it is enough to emit assembly which
-;;; checks the value in eax/rax and sets the lsb in al: 1 -> #t or 0 -> #f
+;;; ends with a comparison operator. The lsb in eax will be be taken to
+;;; indicate the truth or falsity of the expression.
 ;;; See below for examples
 (define-syntax define-predicate
   (syntax-rules ()
-    [(_ (prim-name arg) b* ...)
-     (define-primitive (prim-name arg)
-       (emit-expr arg)
+    [(_ (prim-name si arg) b* ...)
+     (define-primitive (prim-name si arg) ; 0 is unused stack pointer
+       (emit-expr si arg)
        b* ...
+       (emit "  setz al")
        (emit "  movzx eax, al")
        (emit "  shl eax, ~s" bool-shift)
        (emit "  or eax, ~s" bool-tag))]))
 
-(define-predicate (fixnum? arg)
-  (emit "  and eax, ~s" fixnum-mask)
-  (emit "  setz al"))
+(define-predicate (fixnum? si arg)
+  (emit "  and eax, ~s" fixnum-mask))
 
-(define-predicate (fxzero? arg)
-  (emit "  cmp eax, ~s" fixnum-tag)
-  (emit "  sete al"))
+(define-predicate (fxzero? si arg)
+  (emit "  cmp eax, ~s" fixnum-tag))
 
-(define-predicate (null? arg)
-  (emit "  cmp eax, ~s" empty-list)
-  (emit "  sete al"))
+(define-predicate (null? si arg)
+  (emit "  cmp eax, ~s" empty-list))
 
-(define-predicate (boolean? arg)
+(define-predicate (boolean? si arg)
   (emit "  and eax, ~s" bool-mask)
-  (emit "  cmp eax, ~s" bool-tag)
-  (emit "  sete al"))
+  (emit "  cmp eax, ~s" bool-tag))
 
-(define-predicate (char? arg)
+(define-predicate (char? si arg)
   (emit "  and eax, ~s" char-mask)
-  (emit "  cmp eax, ~s" char-tag)
-  (emit "  setz al"))
+  (emit "  cmp eax, ~s" char-tag))
 
-
-(define-predicate (not arg)
-  (emit "  cmp eax, ~s" bool-f)
-  (emit "  sete al"))
+(define-predicate (not si arg)
+  (emit "  cmp eax, ~s" bool-f))
 
 (define-primitive (fxlognot arg)
   (emit-expr arg)
