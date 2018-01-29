@@ -106,17 +106,13 @@
 ;;; See below for examples
 (define-syntax define-predicate
   (syntax-rules ()
-    [(_ (prim-name arg) b b* ...)
-     (begin
-       (putprop 'prim-name '*is-prim* #t)
-       (putprop 'prim-name '*arg-count* 1)
-       (putprop 'prim-name '*emitter*
-                (lambda (arg)
-                  (emit-expr arg)
-                  b b* ...
-                  (emit "  movzx eax, al")
-                  (emit "  shl eax, ~s" bool-shift)
-                  (emit "  or eax, ~s" bool-tag))))]))
+    [(_ (prim-name arg) b* ...)
+     (define-primitive (prim-name arg)
+       (emit-expr arg)
+       b* ...
+       (emit "  movzx eax, al")
+       (emit "  shl eax, ~s" bool-shift)
+       (emit "  or eax, ~s" bool-tag))]))
 
 (define-predicate (fixnum? arg)
   (emit "  and eax, ~s" fixnum-mask)
