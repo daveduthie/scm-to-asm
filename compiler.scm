@@ -1,9 +1,10 @@
 (load "util.scm")
 
-(load "tests-1.1-req.scm")
-(load "tests-1.2-req.scm")
-(load "tests-1.3-req.scm")
-(load "tests-1.4-req.scm")
+;; (load "tests-1.1-req.scm")
+;; (load "tests-1.2-req.scm")
+;; (load "tests-1.3-req.scm")
+;; (load "tests-1.4-req.scm")
+(load "tests-1.5-req.scm")
 
 
 ;;;; Helpers ----------------------------------------------------------------
@@ -52,19 +53,25 @@
    [else           (error 'emit-program "Cannot find representation for this element: " x)]))
 
 (define (emit-immediate x)
-  (emit "  mov eax, ~s" (immediate-rep x)))
+  (emit "  mov rax, ~s" (immediate-rep x)))
 
 ;;;; Primitive calls ----------------------------------------------------------------
 
 (define-syntax define-primitive
   (syntax-rules ()
-    [(_ (prim-name arg* ...) b b* ...)
+    [(_ (prim-name si arg* ...) b b* ...)
      (begin
        (putprop 'prim-name '*is-prim* #t)
        (putprop 'prim-name '*arg-count*
                 (length '(arg* ...)))
        (putprop 'prim-name '*emitter*
-                (lambda (arg* ...) b b* ...)))]))
+                (lambda (si arg* ...) b b* ...)))]
+    [(_ (prim-name si . args) b b* ...)
+     (begin
+       (putprop 'prim-name '*is-prim* #t)
+       (putprop 'prim-name '*variadic?* #t)
+       (putprop 'prim-name '*emitter*
+                (lambda (si . args) b b* ...)))] ))
 
 (define (primitive? x)
   (and (symbol? x) (getprop x '*is-prim*)))
@@ -76,33 +83,40 @@
 (define (primcall? expr)
   (and (pair? expr) (primitive? (car expr))))
 
-(define (emit-primcall expr)
+(define (check-primcall-args prim args)
+  (unless (or (getprop prim '*variadic?*)
+              (eq? (length args) (getprop prim '*arg-count*)))
+    (errorf 'check-primcall-args
+            "Wrong number of args (~s) for expr: ~s.~%~s takes ~s args.~%"
+            args prim prim (getprop prim '*arg-count*))))
+
+(define (emit-primcall si expr)
   (let [(prim (car expr)) (args (cdr expr))]
-    ;; (check-primcall-args prim args)
-    (apply (primitive-emitter prim) args)))
+    (check-primcall-args prim args)
+    (apply (primitive-emitter prim) si args)))
 
-(define-primitive (fxadd1 arg)
-  (emit-expr arg)
-  (emit "  add eax, ~s" (immediate-rep 1)))
+(define-primitive (fxadd1 si arg)
+  (emit-expr si arg)
+  (emit "  add rax, ~s" (immediate-rep 1)))
 
-(define-primitive (fxsub1 arg)
-  (emit-expr arg)
-  (emit "  sub eax, ~s" (immediate-rep 1)))
+(define-primitive (fxsub1 si arg)
+  (emit-expr si arg)
+  (emit "  sub rax, ~s" (immediate-rep 1)))
 
-(define-primitive (fixnum->char arg)
-  (emit-expr arg)
-  (emit "  shl eax, ~s" (- char-shift fixnum-shift))
-  (emit "  or eax, ~s" char-tag))
+(define-primitive (fixnum->char si arg)
+  (emit-expr si arg)
+  (emit "  shl rax, ~s" (- char-shift fixnum-shift))
+  (emit "  or rax, ~s" char-tag))
 
-(define-primitive (char->fixnum arg)
-  (emit-expr arg)
-  (emit "  shr eax, ~s" char-shift)
-  (emit "  shl eax, ~s" fixnum-shift))
+(define-primitive (char->fixnum si arg)
+  (emit-expr si arg)
+  (emit "  shr rax, ~s" char-shift)
+  (emit "  shl rax, ~s" fixnum-shift))
 
 ;;; Many primitives are unary predicates which return true or false.
 ;;; This macro factors out some of the boilerplate for these predicates.
 ;;; To implement a new predicate, it is enough to emit assembly which
-;;; ends with a comparison operator. The lsb in eax will be be taken to
+;;; ends with a comparison operator. The lsb in rax will be be taken to
 ;;; indicate the truth or falsity of the expression.
 ;;; See below for examples
 (define-syntax define-predicate
@@ -112,34 +126,76 @@
        (emit-expr si arg)
        b* ...
        (emit "  setz al")
-       (emit "  movzx eax, al")
-       (emit "  shl eax, ~s" bool-shift)
-       (emit "  or eax, ~s" bool-tag))]))
+       (emit "  movzx rax, al")
+       (emit "  shl rax, ~s" bool-shift)
+       (emit "  or rax, ~s" bool-tag))]))
 
 (define-predicate (fixnum? si arg)
-  (emit "  and eax, ~s" fixnum-mask))
+  (emit "  and rax, ~s" fixnum-mask))
 
 (define-predicate (fxzero? si arg)
-  (emit "  cmp eax, ~s" fixnum-tag))
+  (emit "  cmp rax, ~s" fixnum-tag))
 
 (define-predicate (null? si arg)
-  (emit "  cmp eax, ~s" empty-list))
+  (emit "  cmp rax, ~s" empty-list))
 
 (define-predicate (boolean? si arg)
-  (emit "  and eax, ~s" bool-mask)
-  (emit "  cmp eax, ~s" bool-tag))
+  (emit "  and rax, ~s" bool-mask)
+  (emit "  cmp rax, ~s" bool-tag))
 
 (define-predicate (char? si arg)
-  (emit "  and eax, ~s" char-mask)
-  (emit "  cmp eax, ~s" char-tag))
+  (emit "  and rax, ~s" char-mask)
+  (emit "  cmp rax, ~s" char-tag))
 
 (define-predicate (not si arg)
-  (emit "  cmp eax, ~s" bool-f))
+  (emit "  cmp rax, ~s" bool-f))
 
-(define-primitive (fxlognot arg)
-  (emit-expr arg)
-  (emit "  or eax, ~s" fixnum-mask)
-  (emit "  not eax"))
+(define-primitive (fxlognot si arg)
+  (emit-expr si arg)
+  (emit "  or rax, ~s" fixnum-mask)
+  (emit "  not rax"))
+
+
+;;;; Higher-arity primitives ----------------------------------------------------------------
+
+(define (build-on-stack si args)
+  ;; (emit ";;; BUILDING STACK FROM ~s WITH ~s" si args)
+  (let loop ([si si] [args args])
+    (unless (null? args)
+      (emit-expr si (car args))
+      (emit "  mov [rsp - ~a], rax" (+ si wordsize))
+      (loop (+ si wordsize) (cdr args)))))
+
+(define (reduce-stack si n rf)
+  (let ([top (+ si (* n wordsize))])
+    ;; (emit ";;; REDUCING FROM ~s TO ~s" top si)
+    (emit "  mov rax, [rsp - ~a]" top)
+    (let reducer ([top (- top wordsize)])
+      (unless (eq? top si)
+        (rf top)
+        (reducer (- top wordsize))))))
+
+(define-syntax define-primitive-reduction
+  (syntax-rules ()
+    [(_ (prim-name si . args) rf init body* ...)
+     (define-primitive (prim-name si . args)
+       (let ([rev   (reverse args)]
+             [len (length args)])
+         (cond
+          [(eq? len 0) (emit "  mov rax, ~s" (immediate-rep init))]
+          [(eq? len 1) (emit-expr si (car args))]
+          [else        (begin ;; (emit-expr si (car rev))
+                              (build-on-stack si rev)
+                              (reduce-stack si len rf))])))]))
+
+(define-primitive-reduction (fx+ si . args)
+  (lambda (si) (emit "  add rax, [rsp - ~a]" si)) 0)
+
+(define-primitive-reduction (fx- si . args)
+  (lambda (si) (emit "  sub rax, [rsp - ~a]" si)) 0)
+
+;;; Multiplication is difficult because of the bit shift.
+;;; How about: shift each arg right by two before multiplying?
 
 ;;;; If form ----------------------------------------------------------------
 
@@ -154,23 +210,23 @@
 (define (if? expr)
   (equal? (car expr) 'if))
 
-(define (emit-if expr)
+(define (emit-if si expr)
   ;; (printf "CALLED IF ~s ~%" expr)
   (let ([test (cadr expr)]
         [consequent (caddr expr)]
         [alternate (cadddr expr)]
         [alt-label (unique-label)]
         [end-label (unique-label)])
-    (emit ";;;; ~s:~s:~s" test consequent alternate)
-    (emit-expr test)
-    (emit "  cmp eax, ~s ; cmp #f" bool-f)
+    ;; (emit ";;;; ~s:~s:~s" test consequent alternate)
+    (emit-expr si test)
+    (emit "  cmp rax, ~s ; cmp #f" bool-f)
     (emit "  je ~a" alt-label)
-    (emit "  cmp eax, ~s ; cmp ()" nil)
+    (emit "  cmp rax, ~s ; cmp ()" nil)
     (emit "  je ~a" alt-label)
-    (emit-expr consequent)
+    (emit-expr si consequent)
     (emit "  jmp ~a" end-label)
     (emit "~a: ; alt" alt-label)
-    (emit-expr alternate)
+    (emit-expr si alternate)
     (emit "~a: ; end" end-label)))
 
 ;;;; And form ----------------------------------------------------------------
@@ -201,20 +257,27 @@
 
 ;;;; Compiler ----------------------------------------------------------------
 
-(define (emit-expr expr)
+(define (emit-expr si expr)
+  ;; (emit ";;; EMIT ~s AT ~s" expr si)
   (cond [(immediate? expr) (emit-immediate expr)]
-        [(if? expr)        (emit-if expr)]
-        [(and? expr)       (emit-if (transform-and expr))]
-        [(or? expr)        (emit-if (transform-or expr))]
-        [(primcall? expr)  (emit-primcall expr)]
+        [(if? expr)        (emit-if si expr)]
+        [(and? expr)       (emit-if si (transform-and expr))]
+        [(or? expr)        (emit-if si (transform-or expr))]
+        [(primcall? expr)  (emit-primcall si expr)]
         [else              (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
 
-(define (emit-header)
-  (emit "global scheme_entry")
-  (emit "section .text")
-  (emit "scheme_entry:"))
+(define (emit-function-header name)
+  (emit "global ~a" name)
+  (emit "~a:" name))
 
 (define (emit-program expr)
-  (emit-header)
-  (emit-expr expr)
+  ;; (emit "section .text")
+  (emit-function-header "L_scheme_entry")
+  (emit-expr 0 expr)
+  (emit "  ret")
+  (emit-function-header "scheme_entry")
+  (emit "  mov rcx, rsp")
+  (emit "  mov [rsp + ~a], rsp" wordsize)
+  (emit "  call L_scheme_entry")
+  (emit "  mov rsp, rcx")
   (emit "  ret"))
