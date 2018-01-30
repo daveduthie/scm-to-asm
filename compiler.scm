@@ -1,9 +1,9 @@
 (load "util.scm")
 
-;; (load "tests-1.1-req.scm")
-;; (load "tests-1.2-req.scm")
-;; (load "tests-1.3-req.scm")
-;; (load "tests-1.4-req.scm")
+(load "tests-1.1-req.scm")
+(load "tests-1.2-req.scm")
+(load "tests-1.3-req.scm")
+(load "tests-1.4-req.scm")
 (load "tests-1.5-req.scm")
 
 
@@ -159,43 +159,97 @@
 ;;;; Higher-arity primitives ----------------------------------------------------------------
 
 (define (build-on-stack si args)
-  ;; (emit ";;; BUILDING STACK FROM ~s WITH ~s" si args)
   (let loop ([si si] [args args])
     (unless (null? args)
       (emit-expr si (car args))
-      (emit "  mov [rsp - ~a], rax" (+ si wordsize))
+      (unless (null? (cdr args))
+        (emit "  mov [rsp - ~a], rax" (+ si wordsize)))
       (loop (+ si wordsize) (cdr args)))))
 
-(define (reduce-stack si n rf)
+(define (reduce-stack si n rf fail)
   (let ([top (+ si (* n wordsize))])
-    ;; (emit ";;; REDUCING FROM ~s TO ~s" top si)
-    (emit "  mov rax, [rsp - ~a]" top)
+    (rf top fail)
     (let reducer ([top (- top wordsize)])
       (unless (eq? top si)
-        (rf top)
+        (rf top fail)
         (reducer (- top wordsize))))))
 
 (define-syntax define-primitive-reduction
   (syntax-rules ()
-    [(_ (prim-name si . args) rf init body* ...)
+    [(_ (prim-name si . args) rf init)
      (define-primitive (prim-name si . args)
        (let ([rev   (reverse args)]
              [len (length args)])
          (cond
           [(eq? len 0) (emit "  mov rax, ~s" (immediate-rep init))]
           [(eq? len 1) (emit-expr si (car args))]
-          [else        (begin ;; (emit-expr si (car rev))
-                              (build-on-stack si rev)
-                              (reduce-stack si len rf))])))]))
+          [else        (begin
+                         ;; (emit-expr si (car rev))
+                         (build-on-stack si rev)
+                         (reduce-stack si (sub1 len) rf nil))])))]))
 
 (define-primitive-reduction (fx+ si . args)
-  (lambda (si) (emit "  add rax, [rsp - ~a]" si)) 0)
+  (lambda (si fail) (emit "  add rax, [rsp - ~a]" si)) 0)
 
 (define-primitive-reduction (fx- si . args)
-  (lambda (si) (emit "  sub rax, [rsp - ~a]" si)) 0)
+  (lambda (si fail) (emit "  sub rax, [rsp - ~a]" si)) 0)
 
-;;; Multiplication is difficult because of the bit shift.
-;;; How about: shift each arg right by two before multiplying?
+(define-primitive-reduction (fx* si . args)
+  (lambda (si fail)
+    (emit "  shr rax, 2")
+    (emit "  imul rax, [rsp - ~a]" si)) 1)
+
+(define-primitive-reduction (fxlogor si . args)
+  (lambda (si fail) (emit "  or rax, [rsp - ~a]" si)) 0)
+
+(define-primitive-reduction (fxlogand si . args)
+  (lambda (si fail) (emit "  and rax, [rsp - ~a]" si)) 0)
+
+(define-syntax define-primitive-variadic-predicate
+  (syntax-rules ()
+    [(_ (prim-name si . args) rf)
+     (define-primitive (prim-name si . args)
+       (let ([fail (unique-label)]
+             [end (unique-label)]
+             [rev (reverse args)]
+             [len (length args)])
+         (cond
+          [(eq? len 0) (error 'fx= "Cannot compare nothing")]
+          [(eq? len 1) (emit-expr si bool-t)]
+          [else        (begin
+                         (build-on-stack si rev)
+                         (reduce-stack si (sub1 len) rf fail)
+                         ;; if control reaches this point, args are equal
+                         (emit "  mov rax, ~s" bool-t)
+                         (emit " jmp ~a" end)
+                         (emit "~a: ; not= label" fail)
+                         (emit "  mov rax, ~s" bool-f)
+                         (emit "~a: ; end label" end))])))]))
+
+(define-primitive-variadic-predicate (fx= si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jne ~a" fail)))
+
+(define-primitive-variadic-predicate (fx< si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jnl ~a" fail)))
+
+(define-primitive-variadic-predicate (fx<= si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jnle ~a" fail)))
+
+(define-primitive-variadic-predicate (fx> si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jng ~a" fail)))
+
+(define-primitive-variadic-predicate (fx>= si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jnge ~a" fail)))
 
 ;;;; If form ----------------------------------------------------------------
 
