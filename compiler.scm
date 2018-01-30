@@ -5,6 +5,7 @@
 (load "tests-1.3-req.scm")
 (load "tests-1.4-req.scm")
 (load "tests-1.5-req.scm")
+(load "tests-1.6-req.scm")
 
 
 ;;;; Helpers ----------------------------------------------------------------
@@ -156,101 +157,6 @@
   (emit "  not rax"))
 
 
-;;;; Higher-arity primitives ----------------------------------------------------------------
-
-(define (build-on-stack si args)
-  (let loop ([si si] [args args])
-    (unless (null? args)
-      (emit-expr si (car args))
-      (unless (null? (cdr args))
-        (emit "  mov [rsp - ~a], rax" (+ si wordsize)))
-      (loop (+ si wordsize) (cdr args)))))
-
-(define (reduce-stack si n rf fail)
-  (let ([top (+ si (* n wordsize))])
-    (rf top fail)
-    (let reducer ([top (- top wordsize)])
-      (unless (eq? top si)
-        (rf top fail)
-        (reducer (- top wordsize))))))
-
-(define-syntax define-primitive-reduction
-  (syntax-rules ()
-    [(_ (prim-name si . args) rf init)
-     (define-primitive (prim-name si . args)
-       (let ([rev   (reverse args)]
-             [len (length args)])
-         (cond
-          [(eq? len 0) (emit "  mov rax, ~s" (immediate-rep init))]
-          [(eq? len 1) (emit-expr si (car args))]
-          [else        (begin
-                         ;; (emit-expr si (car rev))
-                         (build-on-stack si rev)
-                         (reduce-stack si (sub1 len) rf nil))])))]))
-
-(define-primitive-reduction (fx+ si . args)
-  (lambda (si fail) (emit "  add rax, [rsp - ~a]" si)) 0)
-
-(define-primitive-reduction (fx- si . args)
-  (lambda (si fail) (emit "  sub rax, [rsp - ~a]" si)) 0)
-
-(define-primitive-reduction (fx* si . args)
-  (lambda (si fail)
-    (emit "  shr rax, 2")
-    (emit "  imul rax, [rsp - ~a]" si)) 1)
-
-(define-primitive-reduction (fxlogor si . args)
-  (lambda (si fail) (emit "  or rax, [rsp - ~a]" si)) 0)
-
-(define-primitive-reduction (fxlogand si . args)
-  (lambda (si fail) (emit "  and rax, [rsp - ~a]" si)) 0)
-
-(define-syntax define-primitive-variadic-predicate
-  (syntax-rules ()
-    [(_ (prim-name si . args) rf)
-     (define-primitive (prim-name si . args)
-       (let ([fail (unique-label)]
-             [end (unique-label)]
-             [rev (reverse args)]
-             [len (length args)])
-         (cond
-          [(eq? len 0) (error 'fx= "Cannot compare nothing")]
-          [(eq? len 1) (emit-expr si bool-t)]
-          [else        (begin
-                         (build-on-stack si rev)
-                         (reduce-stack si (sub1 len) rf fail)
-                         ;; if control reaches this point, args are equal
-                         (emit "  mov rax, ~s" bool-t)
-                         (emit " jmp ~a" end)
-                         (emit "~a: ; not= label" fail)
-                         (emit "  mov rax, ~s" bool-f)
-                         (emit "~a: ; end label" end))])))]))
-
-(define-primitive-variadic-predicate (fx= si . args)
-  (lambda (si fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jne ~a" fail)))
-
-(define-primitive-variadic-predicate (fx< si . args)
-  (lambda (si fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jnl ~a" fail)))
-
-(define-primitive-variadic-predicate (fx<= si . args)
-  (lambda (si fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jnle ~a" fail)))
-
-(define-primitive-variadic-predicate (fx> si . args)
-  (lambda (si fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jng ~a" fail)))
-
-(define-primitive-variadic-predicate (fx>= si . args)
-  (lambda (si fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jnge ~a" fail)))
-
 ;;;; If form ----------------------------------------------------------------
 
 ;;; Require programmatic access to unique labels
@@ -265,13 +171,11 @@
   (equal? (car expr) 'if))
 
 (define (emit-if si expr)
-  ;; (printf "CALLED IF ~s ~%" expr)
   (let ([test (cadr expr)]
         [consequent (caddr expr)]
         [alternate (cadddr expr)]
         [alt-label (unique-label)]
         [end-label (unique-label)])
-    ;; (emit ";;;; ~s:~s:~s" test consequent alternate)
     (emit-expr si test)
     (emit "  cmp rax, ~s ; cmp #f" bool-f)
     (emit "  je ~a" alt-label)
@@ -309,10 +213,105 @@
 (define (or? expr)
   (equal? (car expr) 'or))
 
+;;;; Higher-arity primitives ----------------------------------------------------------------
+
+(define (build-on-stack si args)
+  (let loop ([si si] [args args])
+    (unless (null? args)
+      (emit-expr si (car args))
+      (unless (null? (cdr args))
+        (emit "  mov [rsp - ~a], rax" (+ si wordsize)))
+      (loop (+ si wordsize) (cdr args)))))
+
+(define (reduce-stack si n rf fail)
+  (let ([top (+ si (* n wordsize))])
+    (rf top fail)
+    (let reducer ([top (- top wordsize)])
+      (unless (eq? top si)
+        (rf top fail)
+        (reducer (- top wordsize))))))
+
+(define-syntax define-primitive-reduction
+  (syntax-rules ()
+    [(_ (prim-name si . args) rf init)
+     (define-primitive (prim-name si . args)
+       (let ([rev (reverse args)]
+             [len (length args)])
+         (cond
+          [(eq? len 0) (emit "  mov rax, ~s" (immediate-rep init))]
+          [(eq? len 1) (emit-expr si (car args))]
+          [else        (begin
+                         ;; (emit-expr si (car rev))
+                         (build-on-stack si rev)
+                         (reduce-stack si (sub1 len) rf nil))])))]))
+
+(define-primitive-reduction (fx+ si . args)
+  (lambda (si fail) (emit "  add rax, [rsp - ~a]" si)) 0)
+
+(define-primitive-reduction (fx- si . args)
+  (lambda (si fail) (emit "  sub rax, [rsp - ~a]" si)) 0)
+
+(define-primitive-reduction (fx* si . args)
+  (lambda (si fail)
+    (emit "  shr rax, 2")
+    (emit "  imul rax, [rsp - ~a]" si)) 1)
+
+(define-primitive-reduction (fxlogor si . args)
+  (lambda (si fail) (emit "  or rax, [rsp - ~a]" si)) 0)
+
+(define-primitive-reduction (fxlogand si . args)
+  (lambda (si fail) (emit "  and rax, [rsp - ~a]" si)) 0)
+
+(define-syntax define-primitive-variadic-predicate
+  (syntax-rules ()
+    [(_ (prim-name si . args) rf)
+     (define-primitive (prim-name si . args)
+       (let ([fail (unique-label)]
+             [end  (unique-label)]
+             [rev  (reverse args)]
+             [len  (length args)])
+         (cond
+          [(eq? len 0) (error 'primitive-variadic "Cannot compare nothing")]
+          [(eq? len 1) (emit-expr si bool-t)]
+          [else        (begin
+                         (build-on-stack si rev)
+                         (reduce-stack si (sub1 len) rf fail)
+                         ;; if control reaches this point, args are equal
+                         (emit "  mov rax, ~s" bool-t)
+                         (emit " jmp ~a" end)
+                         (emit "~a: ; not= label" fail)
+                         (emit "  mov rax, ~s" bool-f)
+                         (emit "~a: ; end label" end))])))]))
+
+(define-primitive-variadic-predicate (fx= si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jne ~a" fail)))
+
+(define-primitive-variadic-predicate (fx< si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jnl ~a" fail)))
+
+(define-primitive-variadic-predicate (fx<= si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jnle ~a" fail)))
+
+(define-primitive-variadic-predicate (fx> si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jng ~a" fail)))
+
+(define-primitive-variadic-predicate (fx>= si . args)
+  (lambda (si fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jnge ~a" fail)))
+
+
 ;;;; Compiler ----------------------------------------------------------------
 
 (define (emit-expr si expr)
-  ;; (emit ";;; EMIT ~s AT ~s" expr si)
   (cond [(immediate? expr) (emit-immediate expr)]
         [(if? expr)        (emit-if si expr)]
         [(and? expr)       (emit-if si (transform-and expr))]
@@ -325,7 +324,6 @@
   (emit "~a:" name))
 
 (define (emit-program expr)
-  ;; (emit "section .text")
   (emit-function-header "L_scheme_entry")
   (emit-expr 0 expr)
   (emit "  ret")
