@@ -60,19 +60,19 @@
 
 (define-syntax define-primitive
   (syntax-rules ()
-    [(_ (prim-name si arg* ...) b b* ...)
+    [(_ (prim-name si env arg* ...) b b* ...)
      (begin
        (putprop 'prim-name '*is-prim* #t)
        (putprop 'prim-name '*arg-count*
                 (length '(arg* ...)))
        (putprop 'prim-name '*emitter*
-                (lambda (si arg* ...) b b* ...)))]
-    [(_ (prim-name si . args) b b* ...)
+                (lambda (si env arg* ...) b b* ...)))]
+    [(_ (prim-name si env . args) b b* ...)
      (begin
        (putprop 'prim-name '*is-prim* #t)
        (putprop 'prim-name '*variadic?* #t)
        (putprop 'prim-name '*emitter*
-                (lambda (si . args) b b* ...)))] ))
+                (lambda (si env . args) b b* ...)))] ))
 
 (define (primitive? x)
   (and (symbol? x) (getprop x '*is-prim*)))
@@ -91,26 +91,26 @@
             "Wrong number of args (~s) for expr: ~s.~%~s takes ~s args.~%"
             args prim prim (getprop prim '*arg-count*))))
 
-(define (emit-primcall si expr)
+(define (emit-primcall si env expr)
   (let [(prim (car expr)) (args (cdr expr))]
     (check-primcall-args prim args)
-    (apply (primitive-emitter prim) si args)))
+    (apply (primitive-emitter prim) si env args)))
 
-(define-primitive (fxadd1 si arg)
-  (emit-expr si arg)
+(define-primitive (fxadd1 si env arg)
+  (emit-expr si env arg)
   (emit "  add rax, ~s" (immediate-rep 1)))
 
-(define-primitive (fxsub1 si arg)
-  (emit-expr si arg)
+(define-primitive (fxsub1 si env arg)
+  (emit-expr si env arg)
   (emit "  sub rax, ~s" (immediate-rep 1)))
 
-(define-primitive (fixnum->char si arg)
-  (emit-expr si arg)
+(define-primitive (fixnum->char si env arg)
+  (emit-expr si env arg)
   (emit "  shl rax, ~s" (- char-shift fixnum-shift))
   (emit "  or rax, ~s" char-tag))
 
-(define-primitive (char->fixnum si arg)
-  (emit-expr si arg)
+(define-primitive (char->fixnum si env arg)
+  (emit-expr si env arg)
   (emit "  shr rax, ~s" char-shift)
   (emit "  shl rax, ~s" fixnum-shift))
 
@@ -122,37 +122,37 @@
 ;;; See below for examples
 (define-syntax define-predicate
   (syntax-rules ()
-    [(_ (prim-name si arg) b* ...)
-     (define-primitive (prim-name si arg) ; 0 is unused stack pointer
-       (emit-expr si arg)
+    [(_ (prim-name si env arg) b* ...)
+     (define-primitive (prim-name si env arg) ; 0 is unused stack pointer
+       (emit-expr si env arg)
        b* ...
        (emit "  setz al")
        (emit "  movzx rax, al")
        (emit "  shl rax, ~s" bool-shift)
        (emit "  or rax, ~s" bool-tag))]))
 
-(define-predicate (fixnum? si arg)
+(define-predicate (fixnum? si env arg)
   (emit "  and rax, ~s" fixnum-mask))
 
-(define-predicate (fxzero? si arg)
+(define-predicate (fxzero? si env arg)
   (emit "  cmp rax, ~s" fixnum-tag))
 
-(define-predicate (null? si arg)
+(define-predicate (null? si env arg)
   (emit "  cmp rax, ~s" empty-list))
 
-(define-predicate (boolean? si arg)
+(define-predicate (boolean? si env arg)
   (emit "  and rax, ~s" bool-mask)
   (emit "  cmp rax, ~s" bool-tag))
 
-(define-predicate (char? si arg)
+(define-predicate (char? si env arg)
   (emit "  and rax, ~s" char-mask)
   (emit "  cmp rax, ~s" char-tag))
 
-(define-predicate (not si arg)
+(define-predicate (not si env arg)
   (emit "  cmp rax, ~s" bool-f))
 
-(define-primitive (fxlognot si arg)
-  (emit-expr si arg)
+(define-primitive (fxlognot si env arg)
+  (emit-expr si env arg)
   (emit "  or rax, ~s" fixnum-mask)
   (emit "  not rax"))
 
@@ -168,29 +168,29 @@
         L))))
 
 (define (if? expr)
-  (equal? (car expr) 'if))
+  (and (pair? expr) (equal? (car expr) 'if)))
 
-(define (emit-if si expr)
+(define (emit-if si env expr)
   (let ([test (cadr expr)]
         [consequent (caddr expr)]
         [alternate (cadddr expr)]
         [alt-label (unique-label)]
         [end-label (unique-label)])
-    (emit-expr si test)
+    (emit-expr si env test)
     (emit "  cmp rax, ~s ; cmp #f" bool-f)
     (emit "  je ~a" alt-label)
     (emit "  cmp rax, ~s ; cmp ()" nil)
     (emit "  je ~a" alt-label)
-    (emit-expr si consequent)
+    (emit-expr si env consequent)
     (emit "  jmp ~a" end-label)
     (emit "~a: ; alt" alt-label)
-    (emit-expr si alternate)
+    (emit-expr si env alternate)
     (emit "~a: ; end" end-label)))
 
 ;;;; And form ----------------------------------------------------------------
 
 (define (and? expr)
-  (equal? (car expr) 'and))
+  (and (pair? expr) (equal? (car expr) 'and)))
 
 ;; TODO: Study this macro
 ;; Transform an and expression into a nested if expression.
@@ -211,71 +211,71 @@
         `(if ,(car i) #t ,(alternate (cdr i))))))
 
 (define (or? expr)
-  (equal? (car expr) 'or))
+  (and (pair? expr) (equal? (car expr) 'or)))
 
 ;;;; Higher-arity primitives ----------------------------------------------------------------
 
-(define (build-on-stack si args)
+(define (build-on-stack si env args)
   (let loop ([si si] [args args])
     (unless (null? args)
-      (emit-expr si (car args))
+      (emit-expr si env (car args))
       (unless (null? (cdr args))
         (emit "  mov [rsp - ~a], rax" (+ si wordsize)))
       (loop (+ si wordsize) (cdr args)))))
 
-(define (reduce-stack si n rf fail)
+(define (reduce-stack si env n rf fail)
   (let ([top (+ si (* n wordsize))])
-    (rf top fail)
-    (let reducer ([top (- top wordsize)])
+    (rf top env fail)
+    (let loop ([top (- top wordsize)])
       (unless (eq? top si)
-        (rf top fail)
-        (reducer (- top wordsize))))))
+        (rf top env fail)
+        (loop (- top wordsize))))))
 
 (define-syntax define-primitive-reduction
   (syntax-rules ()
-    [(_ (prim-name si . args) rf init)
-     (define-primitive (prim-name si . args)
+    [(_ (prim-name si env . args) rf init)
+     (define-primitive (prim-name si env . args)
        (let ([rev (reverse args)]
              [len (length args)])
          (cond
           [(eq? len 0) (emit "  mov rax, ~s" (immediate-rep init))]
-          [(eq? len 1) (emit-expr si (car args))]
+          [(eq? len 1) (emit-expr si env (car args))]
           [else        (begin
-                         ;; (emit-expr si (car rev))
-                         (build-on-stack si rev)
-                         (reduce-stack si (sub1 len) rf nil))])))]))
+                         ;; (emit-expr si env (car rev))
+                         (build-on-stack si env rev)
+                         (reduce-stack si env (sub1 len) rf nil))])))]))
 
-(define-primitive-reduction (fx+ si . args)
-  (lambda (si fail) (emit "  add rax, [rsp - ~a]" si)) 0)
+(define-primitive-reduction (fx+ si env . args)
+  (lambda (si env fail) (emit "  add rax, [rsp - ~a]" si)) 0)
 
-(define-primitive-reduction (fx- si . args)
-  (lambda (si fail) (emit "  sub rax, [rsp - ~a]" si)) 0)
+(define-primitive-reduction (fx- si env . args)
+  (lambda (si env fail) (emit "  sub rax, [rsp - ~a]" si)) 0)
 
-(define-primitive-reduction (fx* si . args)
-  (lambda (si fail)
+(define-primitive-reduction (fx* si env . args)
+  (lambda (si env fail)
     (emit "  shr rax, 2")
     (emit "  imul rax, [rsp - ~a]" si)) 1)
 
-(define-primitive-reduction (fxlogor si . args)
-  (lambda (si fail) (emit "  or rax, [rsp - ~a]" si)) 0)
+(define-primitive-reduction (fxlogor si env . args)
+  (lambda (si env fail) (emit "  or rax, [rsp - ~a]" si)) 0)
 
-(define-primitive-reduction (fxlogand si . args)
-  (lambda (si fail) (emit "  and rax, [rsp - ~a]" si)) 0)
+(define-primitive-reduction (fxlogand si env . args)
+  (lambda (si env fail) (emit "  and rax, [rsp - ~a]" si)) 0)
 
 (define-syntax define-primitive-variadic-predicate
   (syntax-rules ()
-    [(_ (prim-name si . args) rf)
-     (define-primitive (prim-name si . args)
+    [(_ (prim-name si env . args) rf)
+     (define-primitive (prim-name si env . args)
        (let ([fail (unique-label)]
              [end  (unique-label)]
              [rev  (reverse args)]
              [len  (length args)])
          (cond
           [(eq? len 0) (error 'primitive-variadic "Cannot compare nothing")]
-          [(eq? len 1) (emit-expr si bool-t)]
+          [(eq? len 1) (emit-expr si env bool-t)]
           [else        (begin
-                         (build-on-stack si rev)
-                         (reduce-stack si (sub1 len) rf fail)
+                         (build-on-stack si env rev)
+                         (reduce-stack si env (sub1 len) rf fail)
                          ;; if control reaches this point, args are equal
                          (emit "  mov rax, ~s" bool-t)
                          (emit " jmp ~a" end)
@@ -283,41 +283,86 @@
                          (emit "  mov rax, ~s" bool-f)
                          (emit "~a: ; end label" end))])))]))
 
-(define-primitive-variadic-predicate (fx= si . args)
-  (lambda (si fail)
+(define-primitive-variadic-predicate (fx= si env . args)
+  (lambda (si env fail)
     (emit "  cmp rax, [rsp - ~a]" si)
     (emit "  jne ~a" fail)))
 
-(define-primitive-variadic-predicate (fx< si . args)
-  (lambda (si fail)
+(define-primitive-variadic-predicate (fx< si env . args)
+  (lambda (si env fail)
     (emit "  cmp rax, [rsp - ~a]" si)
     (emit "  jnl ~a" fail)))
 
-(define-primitive-variadic-predicate (fx<= si . args)
-  (lambda (si fail)
+(define-primitive-variadic-predicate (fx<= si env . args)
+  (lambda (si env fail)
     (emit "  cmp rax, [rsp - ~a]" si)
     (emit "  jnle ~a" fail)))
 
-(define-primitive-variadic-predicate (fx> si . args)
-  (lambda (si fail)
+(define-primitive-variadic-predicate (fx> si env . args)
+  (lambda (si env fail)
     (emit "  cmp rax, [rsp - ~a]" si)
     (emit "  jng ~a" fail)))
 
-(define-primitive-variadic-predicate (fx>= si . args)
-  (lambda (si fail)
+(define-primitive-variadic-predicate (fx>= si env . args)
+  (lambda (si env fail)
     (emit "  cmp rax, [rsp - ~a]" si)
     (emit "  jnge ~a" fail)))
 
 
+;;;; Let bindings ----------------------------------------------------------------
+;;; Can't I desugar these into lambdas?
+;;; Oh, I don't have lambdas yet :P
+
+(define (let? expr)
+  (and (pair? expr) (equal? (car expr) 'let)))
+
+;; (define (let-body expr)
+;;   (caddr expr))
+
+(define (emit-stack-save si)
+  (emit "  mov [rsp - ~s], rax" si))
+
+(define (extend-env sym si env)
+  (cons (cons sym si) env))
+
+(define (emit-let si env expr)
+  (define (process-let bindings si new-env)
+    (if (empty? bindings)
+        (emit-expr si new-env (caddr expr))
+        (let ([b (car bindings)]
+              [nsi (+ si wordsize)])
+          (emit-expr si env (cadr b))
+          (emit-stack-save nsi)
+          (process-let (cdr bindings)
+                       nsi
+                       (extend-env (car b) nsi new-env)))))
+  (process-let (cadr expr) si env))
+
+(define (variable? expr)
+  (symbol? expr))
+
+(define (lookup sym env)
+  (cdr (assoc sym env)))
+
+(define (emit-stack-load si)
+  (emit "  mov rax, [rsp - ~s]" si))
+
+(define (emit-variable-ref env sym)
+  (cond [(lookup sym env) => emit-stack-load]
+        [else (errorf 'emit-variable-ref "Symbol: ~s is unbound" sym)]))
+
 ;;;; Compiler ----------------------------------------------------------------
 
-(define (emit-expr si expr)
+(define (emit-expr si env expr)
   (cond [(immediate? expr) (emit-immediate expr)]
-        [(if? expr)        (emit-if si expr)]
-        [(and? expr)       (emit-if si (transform-and expr))]
-        [(or? expr)        (emit-if si (transform-or expr))]
-        [(primcall? expr)  (emit-primcall si expr)]
-        [else              (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
+        [(if? expr)        (emit-if si env expr)]
+        [(and? expr)       (emit-if si env (transform-and expr))]
+        [(or? expr)        (emit-if si env (transform-or expr))]
+        [(primcall? expr)  (emit-primcall si env expr)]
+        [(variable? expr)  (emit-variable-ref env expr)]
+        [(let? expr)       (emit-let si env expr)]
+        [else
+         (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
 
 (define (emit-function-header name)
   (emit "global ~a" name)
@@ -325,7 +370,7 @@
 
 (define (emit-program expr)
   (emit-function-header "L_scheme_entry")
-  (emit-expr 0 expr)
+  (emit-expr 0 '() expr)
   (emit "  ret")
   (emit-function-header "scheme_entry")
   (emit "  mov rcx, rsp")

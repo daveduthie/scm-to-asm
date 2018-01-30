@@ -1,6 +1,5 @@
-;; (define (myerror msg . args)
-;;   (raise
-;;    (make-message-condition (apply format msg args))))
+(define (empty? lst)
+  (eq? lst '()))
 
 
 (define colours
@@ -32,3 +31,34 @@
 
 
 
+(define (take n lst)
+  (define (impl n lst acc)
+    (if (or (null? lst) (eq? n 0))
+        (reverse acc)
+        (impl (sub1 n)
+              (cdr lst)
+              (cons (car lst) acc))))
+  (impl n lst '()))
+
+(define (drop n lst)
+  (if (or (null? lst) (eq? n 0))
+      lst
+      (drop (sub1 n) (cdr lst))))
+
+(define (split-at n lst)
+  (define (impl n lst acc)
+    (if (or (null? lst) (eq? n 0))
+        (list (reverse acc)
+              lst)
+        (impl (sub1 n)
+              (cdr lst)
+              (cons (car lst) acc))))
+  (impl n lst '()))
+
+(define (partition-all n lst)
+  (define (impl lst acc)
+    (if (null? lst)
+        (reverse acc)
+        (let ([s (split-at n lst)])
+          (impl (cadr s) (cons (car s) acc)))))
+  (impl lst '()))
