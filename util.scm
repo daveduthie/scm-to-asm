@@ -62,3 +62,6 @@
         (let ([s (split-at n lst)])
           (impl (cadr s) (cons (car s) acc)))))
   (impl lst '()))
+
+(define (printf str . args)
+  (apply fprintf (console-output-port) str args))
