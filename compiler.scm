@@ -7,7 +7,6 @@
 (load "tests-1.5-req.scm")
 (load "tests-1.6-req.scm")
 
-
 ;;;; Helpers ----------------------------------------------------------------
 
 (define (emit . args)
@@ -331,7 +330,7 @@
         (emit-expr si new-env (caddr expr))
         (let ([b (car bindings)]
               [nsi (+ si wordsize)])
-          (emit-expr si env (cadr b))
+          (emit-expr si new-env (cadr b))
           (emit-stack-save nsi)
           (process-let (cdr bindings)
                        nsi

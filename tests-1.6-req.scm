@@ -33,6 +33,11 @@
          (let (x (fx+ x x))
            (fx+ x x)))))
    => "192\n"]
+
+  ;; let as let*
+  [(let (x 5
+         y (fx+ x 5))
+     y) => "10\n"]
 )
 
 
