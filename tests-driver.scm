@@ -29,28 +29,7 @@
      [else (error 'test-one "invalid test type" type)])
     (printf " ok\n")))
 
-(define (ttest-all)
-  ;; clean tests
-  (set! all-tests '())
-  ;; reload compiler (also bringing in tests)
-  (load "compiler.scm")
-  (let f ([i 0] [ls (reverse all-tests)])
-    (if (null? ls)
-        (printf "passed all ~s tests\n" i)
-        (let ([x (car ls)] [ls (cdr ls)])
-          (let* ([test-name (car x)]
-                 [tests (cdr x)]
-                 [n (length tests)])
-            (printf "Performing ~a tests ...\n" test-name)
-            (let g ([i i] [tests tests])
-              (cond
-                [(null? tests) (f i ls)]
-                [else
-                 (test-one i (car tests))
-                 (g (add1 i) (cdr tests))])))))))
-
-
-(define input-filter 
+(define input-filter
   (make-parameter (lambda (x) x)
     (lambda (x)
       (unless (procedure? x)
@@ -114,6 +93,25 @@
             (error 'test (format "Failed test ~a ~%expected: ~s ~%got ~s"
                                  test-id expected-output output)))))))
 
+(define (ttest-all)
+  ;; clean tests
+  (set! all-tests '())
+  ;; reload compiler (also bringing in tests)
+  (load "compiler.scm")
+  (let f ([i 0] [ls (reverse all-tests)])
+    (if (null? ls)
+        (printf "passed all ~s tests\n" i)
+        (let ([x (car ls)] [ls (cdr ls)])
+          (let* ([test-name (car x)]
+                 [tests (cdr x)]
+                 [n (length tests)])
+            (printf "Performing ~a tests ...\n" test-name)
+            (let g ([i i] [tests tests])
+              (cond
+               [(null? tests) (f i ls)]
+               [else
+                (test-one i (car tests))
+                (g (add1 i) (cdr tests))])))))))
 
 (define (retest?)
   (let [(r (get-string "retest"))]
