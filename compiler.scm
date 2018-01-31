@@ -6,6 +6,7 @@
 (load "tests-1.4-req.scm")
 (load "tests-1.5-req.scm")
 (load "tests-1.6-req.scm")
+(load "tests-1.7-req.scm")
 
 ;;;; Helpers ----------------------------------------------------------------
 
@@ -128,7 +129,7 @@
        (emit "  setz al")
        (emit "  movzx rax, al")
        (emit "  shl rax, ~s" bool-shift)
-       (emit "  or rax, ~s" bool-tag))]))
+       (emit "  or rax, ~s ; end predicate" bool-tag))]))
 
 (define-predicate (fixnum? si env arg)
   (emit "  and rax, ~s" fixnum-mask))
@@ -228,7 +229,8 @@
     (let loop ([top (- top wordsize)])
       (unless (eq? top si)
         (rf top env fail)
-        (loop (- top wordsize))))))
+        (loop (- top wordsize)))
+      (emit "  ; end of reduce-stack"))))
 
 (define-syntax define-primitive-reduction
   (syntax-rules ()
@@ -240,7 +242,6 @@
           [(eq? len 0) (emit "  mov rax, ~s" (immediate-rep init))]
           [(eq? len 1) (emit-expr si env (car args))]
           [else        (begin
-                         ;; (emit-expr si env (car rev))
                          (build-on-stack si env rev)
                          (reduce-stack si env (sub1 len) rf nil))])))]))
 
@@ -315,9 +316,6 @@
 (define (let? expr)
   (and (pair? expr) (equal? (car expr) 'let)))
 
-;; (define (let-body expr)
-;;   (caddr expr))
-
 (define (emit-stack-save si)
   (emit "  mov [rsp - ~s], rax" si))
 
@@ -350,9 +348,74 @@
   (cond [(lookup sym env) => emit-stack-load]
         [else (errorf 'emit-variable-ref "Symbol: ~s is unbound" sym)]))
 
+;;;; Letrec (lambdas) ----------------------------------------------------------------
+
+(define (letrec? expr)
+  (and (pair? expr) (equal? (car expr) 'letrec)))
+
+(define (emit-letrec si env expr)
+  ;; (printf "~%Trying to compile letrec: ~s~%" expr)
+  (let*  ([bindings (partition-all 2 (cadr expr))]
+          [lvars   (map car bindings)]
+          [lambdas (map cadr bindings)]
+          [labels  (map (lambda (x) (unique-label)) lvars)]
+          [env     (append (map cons lvars labels) env)])
+
+    ;; (printf "~%lvars: ~s~%lambdas: ~s~%labels: ~s~%env: ~s~%" lvars lambdas labels env)
+
+    ;; compile lambdas
+    (for-each (emit-lambda env) lambdas labels)
+
+    ;; body of letrec
+    (for-each (lambda (exp) (emit-expr si env exp)) (cddr expr)) ; OK?
+    ))
+
+(define user-lambdas '())
+
+(define (emit-lambda env)
+  ;; (printf "Defining lambda! with env: ~s" env)
+  (lambda (expr label)
+    ;; (printf "Called lambda with expr, label: ~s ~s" expr label)
+    ;; (emit "  ; lambda got called here wth expr: ~s label: ~s" expr label)
+    (set! user-lambdas
+     (cons
+      (lambda ()
+        (emit-function-header label)
+        (let ([fmls (cadr expr)]
+              [body (cddr expr)])
+          ;; (printf "fmls: ~s body: ~s" fmls body)
+          (let f ([fmls fmls] [si wordsize] [env env])
+            (cond [(empty? fmls) (for-each (lambda (exp)
+                                             ;; (printf "Emitting expr for ~s" exp)
+                                             (emit-expr si env exp)
+                                             (emit "  ret")) body)]
+                  [else (f (cdr fmls)
+                           (+ si wordsize)
+                           (extend-env (car fmls) si env))]))))
+      user-lambdas))))
+
+;;;; Function application
+
+(define (app? expr)
+  ;; For this work, app? must be evaluated after other syntax-matchers
+  (and (pair? expr) (symbol? (car expr))))
+
+(define (emit-app si env expr)
+  (define (emit-arguments si args)
+    (unless (empty? args)
+      (emit-expr si env (car args))
+      (emit "  mov [rsp - ~s], rax" si)
+      (emit-arguments (+ si wordsize) (cdr args))))
+  (emit-arguments (+ si (* wordsize 2)) (cdr expr))
+  (emit "  sub rsp, ~s" si)
+  (emit "  call ~a ; app call" (lookup (car expr) env))
+  (emit "  add rsp, ~s" si))
+
 ;;;; Compiler ----------------------------------------------------------------
 
 (define (emit-expr si env expr)
+  ;; TODO: rewrite with pattern-matching
+  ;; (emit "  ; emit-expr: ~s with env: ~s" expr env)
   (cond [(immediate? expr) (emit-immediate expr)]
         [(if? expr)        (emit-if si env expr)]
         [(and? expr)       (emit-if si env (transform-and expr))]
@@ -360,6 +423,10 @@
         [(primcall? expr)  (emit-primcall si env expr)]
         [(variable? expr)  (emit-variable-ref env expr)]
         [(let? expr)       (emit-let si env expr)]
+        [(letrec? expr)    (emit-letrec si env expr)]
+        [(app? expr)       (if (equal? 'app (car expr))
+                               (error 'emit-expr "encountered 'app'")
+                               (emit-app si env expr))]
         [else
          (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
 
@@ -368,12 +435,15 @@
   (emit "~a:" name))
 
 (define (emit-program expr)
+  (set! user-lambdas '()) ; clear from previous invocations
   (emit-function-header "L_scheme_entry")
   (emit-expr 0 '() expr)
   (emit "  ret")
   (emit-function-header "scheme_entry")
   (emit "  mov rcx, rsp")
-  (emit "  mov [rsp + ~a], rsp" wordsize)
+  (emit "  mov rsp, rdi")
   (emit "  call L_scheme_entry")
   (emit "  mov rsp, rcx")
-  (emit "  ret"))
+  (emit "  ret")
+  (for-each (lambda (emitter) (emitter))
+            user-lambdas))
