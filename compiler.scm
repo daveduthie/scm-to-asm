@@ -336,7 +336,7 @@
           (process-let (cdr bindings)
                        nsi
                        (extend-env (car b) nsi new-env)))))
-  (process-let (cadr expr) si env))
+  (process-let (partition-all 2 (cadr expr)) si env))
 
 (define (variable? expr)
   (symbol? expr))
