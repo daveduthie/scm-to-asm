@@ -1,5 +1,6 @@
 
 (add-tests-with-string-output "if"
+  [(if (fxzero? 0) 12 13) => "12\n"]
   [(if #t 12 13) => "12\n"]
   [(if #f 12 13) => "13\n"]
   [(if 0 12 13)  => "12\n"]
