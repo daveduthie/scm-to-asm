@@ -162,10 +162,11 @@
 ;;; Require programmatic access to unique labels
 (define unique-label
   (let ([count 0])
-    (lambda ()
-      (let ([L (format "L_~s" count)])
-        (set! count (add1 count))
-        L))))
+    (case-lambda
+      [() (unique-label "")]
+      [(x) (let ([L (format "L_~s_~a" count x)])
+             (set! count (add1 count))
+             L)])))
 
 (define (if? expr)
   (and (pair? expr) (equal? (car expr) 'if)))
@@ -174,8 +175,8 @@
   (let ([test (cadr expr)]
         [consequent (caddr expr)]
         [alternate (cadddr expr)]
-        [alt-label (unique-label)]
-        [end-label (unique-label)])
+        [alt-label (unique-label "alt")]
+        [end-label (unique-label "end")])
     (emit-expr si env test)
     (emit "  cmp rax, ~s ; cmp #f" bool-f)
     (emit "  je ~a" alt-label)
@@ -266,8 +267,8 @@
   (syntax-rules ()
     [(_ (prim-name si env . args) rf)
      (define-primitive (prim-name si env . args)
-       (let ([fail (unique-label)]
-             [end  (unique-label)]
+       (let ([fail (unique-label "fail")]
+             [end  (unique-label "end")]
              [rev  (reverse args)]
              [len  (length args)])
          (cond
