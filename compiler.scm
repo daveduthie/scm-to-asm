@@ -7,6 +7,7 @@
 (load "tests-1.5-req.scm")
 (load "tests-1.6-req.scm")
 (load "tests-1.7-req.scm")
+(load "tests-1.8-req.scm")
 
 ;;;; Helpers ----------------------------------------------------------------
 
@@ -56,6 +57,10 @@
 (define (emit-immediate x)
   (emit "  mov rax, ~s" (immediate-rep x)))
 
+(define (emit-tail-immediate x)
+  (emit-immediate x)
+  (emit "  ret"))
+
 ;;;; Primitive calls ----------------------------------------------------------------
 
 (define-syntax define-primitive
@@ -95,6 +100,10 @@
   (let [(prim (car expr)) (args (cdr expr))]
     (check-primcall-args prim args)
     (apply (primitive-emitter prim) si env args)))
+
+(define (emit-tail-primcall si env expr)
+  (emit-primcall si env expr)
+  (emit "  ret"))
 
 (define-primitive (fxadd1 si env arg)
   (emit-expr si env arg)
@@ -188,6 +197,23 @@
     (emit-expr si env alternate)
     (emit "~a: ; end" end-label)))
 
+(define (emit-tail-if si env expr)
+  (let ([test (cadr expr)]
+        [consequent (caddr expr)]
+        [alternate (cadddr expr)]
+        [alt-label (unique-label "alt")]
+        [end-label (unique-label "end")])
+    (emit-expr si env test)
+    (emit "  cmp rax, ~s ; cmp #f" bool-f)
+    (emit "  je ~a" alt-label)
+    (emit "  cmp rax, ~s ; cmp ()" nil)
+    (emit "  je ~a" alt-label)
+    (emit-tail-expr si env consequent)
+    (emit "  jmp ~a" end-label)
+    (emit "~a: ; alt" alt-label)
+    (emit-tail-expr si env alternate)
+    (emit "~a: ; end" end-label)))
+
 ;;;; And form ----------------------------------------------------------------
 
 (define (and? expr)
@@ -217,12 +243,12 @@
 ;;;; Higher-arity primitives ----------------------------------------------------------------
 
 (define (build-on-stack si env args)
-  (let loop ([si si] [args args])
+  (let loop ([offset (+ si wordsize)] [args args])
     (unless (null? args)
-      (emit-expr si env (car args))
+      (emit-expr offset env (car args))
       (unless (null? (cdr args))
-        (emit "  mov [rsp - ~a], rax" (+ si wordsize)))
-      (loop (+ si wordsize) (cdr args)))))
+        (emit "  mov [rsp - ~a], rax" offset))
+      (loop (+ offset wordsize) (cdr args)))))
 
 (define (reduce-stack si env n rf fail)
   (let ([top (+ si (* n wordsize))])
@@ -243,6 +269,7 @@
           [(eq? len 0) (emit "  mov rax, ~s" (immediate-rep init))]
           [(eq? len 1) (emit-expr si env (car args))]
           [else        (begin
+                         (emit "  ; emitting build on stack (si: ~s)" si)
                          (build-on-stack si env rev)
                          (reduce-stack si env (sub1 len) rf nil))])))]))
 
@@ -329,6 +356,19 @@
         (emit-expr si new-env (caddr expr))
         (let ([b (car bindings)]
               [nsi (+ si wordsize)])
+          (emit-expr si new-env (cadr b)) ; TODO: handle multiple items in body
+          (emit-stack-save nsi)
+          (process-let (cdr bindings)
+                       nsi
+                       (extend-env (car b) nsi new-env)))))
+  (process-let (partition-all 2 (cadr expr)) si env))
+
+(define (emit-tail-let si env expr)
+  (define (process-let bindings si new-env)
+    (if (empty? bindings)
+        (emit-tail-expr si new-env (caddr expr)) ; TODO: handle multiple items in body
+        (let ([b (car bindings)]
+              [nsi (+ si wordsize)])
           (emit-expr si new-env (cadr b))
           (emit-stack-save nsi)
           (process-let (cdr bindings)
@@ -349,47 +389,62 @@
   (cond [(lookup sym env) => emit-stack-load]
         [else (errorf 'emit-variable-ref "Symbol: ~s is unbound" sym)]))
 
+(define (emit-tail-variable-ref env sym)
+  (emit-variable-ref env sym)
+  (emit "  ret"))
+
 ;;;; Letrec (lambdas) ----------------------------------------------------------------
 
 (define (letrec? expr)
   (and (pair? expr) (equal? (car expr) 'letrec)))
 
 (define (emit-letrec si env expr)
-  ;; (printf "~%Trying to compile letrec: ~s~%" expr)
   (let*  ([bindings (partition-all 2 (cadr expr))]
-          [lvars   (map car bindings)]
-          [lambdas (map cadr bindings)]
-          [labels  (map (lambda (x) (unique-label)) lvars)]
-          [env     (append (map cons lvars labels) env)])
-
-    ;; (printf "~%lvars: ~s~%lambdas: ~s~%labels: ~s~%env: ~s~%" lvars lambdas labels env)
+          [lvars    (map car bindings)]
+          [lambdas  (map cadr bindings)]
+          [labels   (map (lambda (x) (unique-label "lambda")) lvars)]
+          [env      (append (map cons lvars labels) env)])
 
     ;; compile lambdas
     (for-each (emit-lambda env) lambdas labels)
 
     ;; body of letrec
-    (for-each (lambda (exp) (emit-expr si env exp)) (cddr expr)) ; OK?
-    ))
+    (for-each (lambda (exp) (emit-expr si env exp)) (cddr expr))))
+
+(define (emit-tail-letrec si env expr)
+  (let*  ([bindings  (partition-all 2 (cadr expr))]
+          [lvars     (map car bindings)]
+          [lambdas   (map cadr bindings)]
+          [labels    (map (lambda (x) (unique-label "lambda")) lvars)]
+          [env       (append (map cons lvars labels) env)]
+          [rev-args  (reverse (cddr expr))]
+          [tail-expr (car rev-args)]
+          [args      (reverse (cdr rev-args))])
+
+    ;; compile lambdas
+    (for-each (emit-lambda env) lambdas labels)
+
+    ;; body of letrec
+    ;; (printf "letrec body: ( ~s ) : ~s" args tail-expr)
+    (for-each (lambda (exp) (emit-expr si env exp)) args)
+    (emit-tail-expr si env tail-expr)))
 
 (define user-lambdas '())
 
 (define (emit-lambda env)
-  ;; (printf "Defining lambda! with env: ~s" env)
   (lambda (expr label)
-    ;; (printf "Called lambda with expr, label: ~s ~s" expr label)
-    ;; (emit "  ; lambda got called here wth expr: ~s label: ~s" expr label)
     (set! user-lambdas
      (cons
       (lambda ()
         (emit-function-header label)
-        (let ([fmls (cadr expr)]
-              [body (cddr expr)])
-          ;; (printf "fmls: ~s body: ~s" fmls body)
+        (let* ([fmls      (cadr expr)]
+               [rev-args  (reverse (cddr expr))]
+               [tail-expr (car rev-args)]
+               [args      (reverse (cdr rev-args))])
           (let f ([fmls fmls] [si wordsize] [env env])
-            (cond [(empty? fmls) (for-each (lambda (exp)
-                                             ;; (printf "Emitting expr for ~s" exp)
-                                             (emit-expr si env exp)
-                                             (emit "  ret")) body)]
+            (cond [(empty? fmls)
+                   (begin (for-each (lambda (exp) (emit-expr si env exp)) args)
+                          (emit-tail-expr si env tail-expr))]
                   [else (f (cdr fmls)
                            (+ si wordsize)
                            (extend-env (car fmls) si env))]))))
@@ -405,12 +460,43 @@
   (define (emit-arguments si args)
     (unless (empty? args)
       (emit-expr si env (car args))
-      (emit "  mov [rsp - ~s], rax" si)
+      (emit "  mov [rsp - ~s], rax ; passing arg to ~s" si (car expr))
       (emit-arguments (+ si wordsize) (cdr args))))
-  (emit-arguments (+ si (* wordsize 2)) (cdr expr))
-  (emit "  sub rsp, ~s" si)
-  (emit "  call ~a ; app call" (lookup (car expr) env))
-  (emit "  add rsp, ~s" si))
+  (emit "  ; si is ~s" si)
+  (let* ([args (cdr expr)]
+         [base (+ si (* 2 wordsize))])
+    (emit-arguments base args)
+    (emit "  sub rsp, ~s" si)
+    (emit "  call ~a ; app call" (lookup (car expr) env))
+    (emit "  add rsp, ~s" si)))
+
+(define (shift-stack-frame-down si n)
+  (let ([shift (+ si wordsize)])
+    (emit "  ; shifting stack frame of ~s args down by ~s" n shift)
+    (let loop ([x n]
+               [offset wordsize])
+      (unless (zero? x)
+        (emit "  mov rax, [rsp - ~s]" (+ offset shift))
+        (emit "  mov [rsp - ~s], rax" offset)
+        (loop (sub1 x) (+ offset wordsize))))))
+
+
+(define (emit-tail-app si env expr)
+  (emit-app si env expr)
+  (emit "  ret ; :'("))
+
+(define (emit-tail-app si env expr)
+  (define (emit-arguments si args)
+    (unless (empty? args)
+      (emit-expr si env (car args))
+      (emit "  mov [rsp - ~s], rax ; passing arg to ~s" si (car expr))
+      (emit-arguments (+ si wordsize) (cdr args))))
+  (emit "  ; si is ~s" si)
+  (let* ([args (cdr expr)]
+         [base (+ si (* 2 wordsize))])
+    (emit-arguments base args)
+    (shift-stack-frame-down si (length args))
+    (emit "  jmp ~a ; app call" (lookup (car expr) env))))
 
 ;;;; Compiler ----------------------------------------------------------------
 
@@ -431,6 +517,23 @@
         [else
          (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
 
+(define (emit-tail-expr si env expr)
+  ;; TODO: rewrite with pattern-matching
+  ;; (printf "~%EMIT_TAIL_EXPR: ~s~%" expr)
+  (cond [(immediate? expr) (emit-tail-immediate expr)]
+        [(if? expr)        (emit-tail-if si env expr)]
+        [(and? expr)       (emit-tail-if si env (transform-and expr))]
+        [(or? expr)        (emit-tail-if si env (transform-or expr))]
+        [(primcall? expr)  (emit-tail-primcall si env expr)]
+        [(variable? expr)  (emit-tail-variable-ref env expr)]
+        [(let? expr)       (emit-tail-let si env expr)]
+        [(letrec? expr)    (emit-tail-letrec si env expr)]
+        [(app? expr)       (if (equal? 'app (car expr))
+                               (error 'emit-expr "encountered 'app'")
+                               (emit-tail-app si env expr))]
+        [else
+         (error 'emit-expr (format "Cannot encode this peanut: ~s" expr))]))
+
 (define (emit-function-header name)
   (emit "global ~a" name)
   (emit "~a:" name))
@@ -438,8 +541,7 @@
 (define (emit-program expr)
   (set! user-lambdas '()) ; clear from previous invocations
   (emit-function-header "L_scheme_entry")
-  (emit-expr 0 '() expr)
-  (emit "  ret")
+  (emit-tail-expr 0 '() expr)
   (emit-function-header "scheme_entry")
   (emit "  mov rcx, rsp")
   (emit "  mov rsp, rdi")
