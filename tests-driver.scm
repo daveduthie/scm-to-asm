@@ -124,20 +124,5 @@
 
 (define (lloop-test)
   (sleep sleep-duration)
-  (if (retest?) (ttest-all))
+  (if (retest?) (fork-thread (lambda () (ttest-all))))
   (lloop-test))
-
-(define (handle-stuff)
-  (guard (exn
-          ((condition? exn)
-           (newline)
-           (if (message-condition? exn)
-               (printf (condition-message exn))
-               (printf "Ouch!"))
-           (newline)
-           (printf (random-element colours))
-           (display (current-time))
-           (printf "\033[0m")
-           (newline)
-           (handle-stuff)))
-    (lloop-test)))
