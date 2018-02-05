@@ -41,7 +41,7 @@ clean:
 test:
 	ENTRY=$(ENTRY) $(SCHEME) --script auto.scm
 
-watch: build
+watch:
 	# watching for changed Scheme and C files
 	watchexec -e scm,c -- ./retest-true
 

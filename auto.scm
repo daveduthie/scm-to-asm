@@ -7,5 +7,4 @@
 (load "tests-driver.scm")
 
 ;; Run the tests
-(ttest-all)
-;; (handle-stuff) ; Broken (mangles error messages)
+(lloop-test)
