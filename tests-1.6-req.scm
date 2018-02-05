@@ -38,6 +38,12 @@
   [(let (x 5
          y (fx+ x 5))
      y) => "10\n"]
+
+  ;; let with multiple expressions in body
+  [(let (a 1 b 2)
+     (fx* b b)
+     (fx- b a)
+     (fx< a b)) => "#t\n"]
 )
 
 

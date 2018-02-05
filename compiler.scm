@@ -356,7 +356,7 @@
         (emit-expr si new-env (caddr expr))
         (let ([b (car bindings)]
               [nsi (+ si wordsize)])
-          (emit-expr si new-env (cadr b)) ; TODO: handle multiple items in body
+          (for-each (lambda (exp) (emit-expr si new-env exp)) (cdr b))
           (emit-stack-save nsi)
           (process-let (cdr bindings)
                        nsi
@@ -366,7 +366,11 @@
 (define (emit-tail-let si env expr)
   (define (process-let bindings si new-env)
     (if (empty? bindings)
-        (emit-tail-expr si new-env (caddr expr)) ; TODO: handle multiple items in body
+        (let ([tail-expr (car (reverse (cddr expr)))])
+          (for-each (lambda (exp) (if (equal? exp tail-expr)
+                                      (emit-tail-expr si new-env exp)
+                                      (emit-expr si new-env exp)))
+                    (cddr expr)))
         (let ([b (car bindings)]
               [nsi (+ si wordsize)])
           (emit-expr si new-env (cadr b))
