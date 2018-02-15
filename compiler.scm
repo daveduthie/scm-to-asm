@@ -166,16 +166,23 @@
   (emit "  not rax"))
 
 
-;;;; If form ----------------------------------------------------------------
 
-;;; Require programmatic access to unique labels
-(define unique-label
+;;;; Labels --------------------------------------------------------------------
+
+(define (mk-labeller)
   (let ([count 0])
     (case-lambda
       [() (unique-label "")]
       [(x) (let ([L (format "L_~s_~a" count x)])
              (set! count (add1 count))
              L)])))
+
+(define unique-label (mk-labeller))
+
+(define (reset-unique-label)
+  (set! unique-label (mk-labeller)))
+
+;;;; If form ----------------------------------------------------------------
 
 (define (if? expr)
   (and (pair? expr) (equal? (car expr) 'if)))
