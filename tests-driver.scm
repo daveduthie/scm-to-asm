@@ -22,7 +22,7 @@
         [out  (caddr test)])
     (printf (random-element colours))
     (printf "test ~s:~s ..." test-id expr)
-    (printf "\033[0m")
+    (printf clear-style)
     (flush-output-port)
     (case type
      [(string) (test-with-string-output test-id expr out)]
@@ -90,8 +90,11 @@
       (let [(output (get-string "stst.out"))]
         (if (string=? expected-output output)
             (hashtable-set! cached-asm test-id asm)
-            (error 'test (format "Failed test ~a ~%expected: ~s ~%got ~s"
-                                 test-id expected-output output)))))))
+            (begin
+              (printf red)
+              (error 'test (format "Failed test ~a ~%expected: ~s ~%got: ~s"
+                                   test-id expected-output output))
+              (printf "~s~%" clear-style)))))))
 
 (define (ttest-all)
   ;; clean tests
