@@ -23,10 +23,6 @@
 #define char_shift   8
 
 #define empty_list   0x2F // 00101111
-
-extern int scheme_entry();
-
-
 const char *ascii_table[0x7F] = {
   "nul",    "soh",    "stx",     "etx",    "eot",    "enq",    "ack",    "bel",
   "bs",     "tab",    "newline", "vt",     "ff",     "return", "so",     "si",
@@ -88,11 +84,31 @@ static void deallocate_protected_space(char* p, int size){
   if(status != 0){ perror("failed to deallocate protected space :'("); };
 }
 
+typedef struct {
+  void* rax; /* 0  scratch */
+  void* rbx; /* 8  preserve */
+  void* rcx; /* 16 scratch */
+  void* rdx; /* 24 scratch */
+  void* rsi; /* 32 preserve */
+  void* rdi; /* 40 preserve */
+  void* rbp; /* 48 preserve */
+  void* rsp; /* 56 preserve */
+} context;
+
+extern int scheme_entry();
+
 int main(int argc, char** argv){
   int stack_size = (16 * 4096);  /* holds 16K cells */
+  int heap_size = (64 * 4096);  /* holds 64K cells */
   char* stack_top = allocate_protected_space(stack_size);
   char* stack_base = stack_top + stack_size;
-  prn(scheme_entry(stack_base));
+  char* heap_top = allocate_protected_space(heap_size);
+  char* heap_base = heap_top + heap_size;
+  context ctx;
+  int ret = scheme_entry(&ctx, stack_base, heap_base); // TODO: What happens here?
+  prn(ret);
   deallocate_protected_space(stack_top, stack_size);
+  deallocate_protected_space(heap_top, heap_size);
+  /* printf("\n---\n%c\n---\n", (char) ctx.rbx); */
   return 0;
 }

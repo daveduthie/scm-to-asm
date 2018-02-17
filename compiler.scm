@@ -442,6 +442,39 @@
                (emit "  call ~a ; app call" (lookup (car expr) env))
                (emit "  add rsp, ~s" si)))))
 
+;;;; Context-switch ----------------------------------------------------------------
+
+(define registers
+  '((rax scratch)
+    (rbx preserve)
+    (rcx scratch)
+    (rdx scratch)
+    (rsi preserve)
+    (rdi preserve)
+    (rbp preserve)
+    (rsp preserve)))
+
+(define (reg-name reg) (car reg))
+
+(define (reg-preserve? reg) (eq? 'preserve (cadr reg)))
+
+(define (preserve-registers cmd)
+  (let loop ([regs registers] [count 0])
+    (unless (null? regs)
+      (let ([reg (car regs)])
+        (when (reg-preserve? reg)
+          (cmd (reg-name reg)
+               (* count wordsize))))
+      (loop (cdr regs) (add1 count)))))
+
+(define (backup-registers)
+  (preserve-registers (lambda (name num)
+                        (emit "  mov [rdi + ~a], ~s" num name))))
+
+(define (restore-registers)
+  (preserve-registers (lambda (name num)
+                        (emit "  mov ~s, [rdi + ~a]" name num))))
+
 ;;;; Compiler ----------------------------------------------------------------
 
 (define (emit-expr si env tail? expr)
@@ -470,10 +503,14 @@
   (emit-function-header "L_scheme_entry")
   (emit-expr 0 '() #t expr)
   (emit-function-header "scheme_entry")
-  (emit "  mov rcx, rsp")
-  (emit "  mov rsp, rdi")
+  (emit "  ; expect rdi <- &ctx,")
+  (emit "  ; rsi <- stack_base, rdx <- heap_base")
+  (backup-registers)
+  (emit "  mov rsp, rsi ; move stack base into rsp")
+  (emit "  mov rbp, rdx ; move heap base into rbp")
+  (emit "  mov rsp, rsi")
   (emit "  call L_scheme_entry")
-  (emit "  mov rsp, rcx")
+  (restore-registers)
   (emit "  ret")
   (for-each (lambda (emitter) (emitter))
             user-lambdas))
