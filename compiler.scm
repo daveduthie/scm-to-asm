@@ -38,13 +38,15 @@
   (and (integer? x) (exact? x) (<= fxlower x fxupper)))
 
 (define (immediate? x)
-  (or (fixnum? x) (boolean? x) (char? x) (equal? x '())))
+  (or (fixnum? x) (boolean? x) (char? x) (equal? x '())
+      (equal? x 'nil)))
 
 (define (immediate-rep x)
   (cond
    [(fixnum? x)    (ash x fixnum-shift)]
    [(boolean? x)   (if x bool-t bool-f)]
    [(equal? x '()) empty-list]
+   [(equal? x 'nil) empty-list]
    [(char? x)
     (bitwise-ior (ash (char->integer x) char-shift) char-tag)]
    [else
@@ -150,8 +152,8 @@
   (emit "  and rax, ~s" char-mask)
   (emit "  cmp rax, ~s" char-tag))
 
-(define-predicate (not si env arg)
-  (emit "  cmp rax, ~s" bool-f))
+(define-primitive (not si env arg)
+  (emit-if si env #f (list 'if arg #f #t)))
 
 (define-primitive (fxlognot si env arg)
   (emit-expr si env #f arg)
