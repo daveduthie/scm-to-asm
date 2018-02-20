@@ -9,6 +9,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#define wordsize 8
+
 // fixnums
 #define fixnum_mask  0x03 // 11
 #define fixnum_tag   0x00 // 00
@@ -21,6 +23,18 @@
 #define char_mask    0xFF // 11110000
 #define char_tag     0x0F // 11110000
 #define char_shift   8
+// lists
+#define obj_mask     0x7  // 111
+#define pair_tag     0x01 // 001
+/* #define car_offset   (0 - pair_tag) // -1 */
+/* #define cdr_offset   (wordsize - pair_tag) // 7 */
+#define car_offset   -1
+#define cdr_offset   7
+
+typedef long long scm_val;
+
+#define car(pair) (* (scm_val *) (pair + car_offset))
+#define cdr(pair) (* (scm_val *) (pair + cdr_offset))
 
 #define empty_list   0x2F // 00101111
 const char *ascii_table[0x7F] = {
@@ -31,9 +45,45 @@ const char *ascii_table[0x7F] = {
   "space"
 };
 
-static void prn(int val){
+typedef uint8_t LEVEL;
+
+static void prn(scm_val, LEVEL);
+
+static void prn_list(scm_val val, LEVEL level) {
+  /* printf("OK %d::1\n", level); */
+
+  scm_val car_ = *(scm_val*) (val + car_offset);
+  scm_val cdr_ = *(scm_val*) (val + cdr_offset);
+
+  /* printf("OK %d::2\n", level); */
+
+  if (level == 0) {
+    printf("(");
+  }
+
+  /* printf("OK %d::3\n", level); */
+
+  prn(car_, level);
+
+  if ((cdr_ & obj_mask) == pair_tag) {
+    printf(" ");
+    prn_list(cdr_, level+1);
+  } else if (cdr_ != empty_list) {
+    printf(" . ");
+    prn(cdr_, level);
+  }
+
+  if (level == 0) {
+    printf(")");
+  }
+}
+
+// TODO: clean up
+static void prn(scm_val val, LEVEL level){
   if((val & fixnum_mask) == fixnum_tag){
-    printf("%d", val >> fixnum_shift);
+    printf("%lld", val >> fixnum_shift);
+  } else if ((val & obj_mask) == pair_tag){
+    prn_list(val, level);
   } else if (val == bool_t){
     printf("#t");
   } else if (val == bool_f){
@@ -43,12 +93,12 @@ static void prn(int val){
   } else if ((val & char_mask) == char_tag){
     char c = (val >> char_shift);
     if (iscntrl(c) || isspace(c)) {
-      if ((int)c == 127) {
+      if ((int)c == 127) { // HACK
         printf("#\\del");
       } else {
         printf("#\\%s", ascii_table[(unsigned char)c]);
       }
-    } else if (!(strcmp(&c, "\\\\"))) {
+    } else if (!(strcmp(&c, "\\\\"))) { // HACK
       printf("#\\\\");
     } else {
       printf("#\\%c", c);
@@ -56,8 +106,6 @@ static void prn(int val){
   } else {
     printf("FAIL!");
   }
-  printf("\n");
-
 }
 
 static char* allocate_protected_space(int size){
@@ -95,20 +143,24 @@ typedef struct {
   void* rsp; /* 56 preserve */
 } context;
 
-extern int scheme_entry();
+extern scm_val scheme_entry();
 
 int main(int argc, char** argv){
   int stack_size = (16 * 4096);  /* holds 16K cells */
   int heap_size = (64 * 4096);  /* holds 64K cells */
+
   char* stack_top = allocate_protected_space(stack_size);
   char* stack_base = stack_top + stack_size;
-  char* heap_top = allocate_protected_space(heap_size);
-  char* heap_base = heap_top + heap_size;
+  char* heap_base = allocate_protected_space(heap_size);
   context ctx;
-  int ret = scheme_entry(&ctx, stack_base, heap_base); // TODO: What happens here?
-  prn(ret);
+
+  /* printf("heap_base: %9llx\n", (scm_val)heap_base); */
+  scm_val ret = scheme_entry(&ctx, stack_base, heap_base);
+  /* printf("      ret: %9llx\n",  ret); */
+  prn(ret, 0);
+  printf("\n");
+
   deallocate_protected_space(stack_top, stack_size);
-  deallocate_protected_space(heap_top, heap_size);
-  /* printf("\n---\n%c\n---\n", (char) ctx.rbx); */
+  deallocate_protected_space(heap_base, heap_size);
   return 0;
 }

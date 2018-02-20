@@ -8,29 +8,44 @@
 (load "tests-1.6-req.scm")
 (load "tests-1.7-req.scm")
 (load "tests-1.8-req.scm")
+(load "tests-1.9-req.scm")
 
 ;;;; Helpers ----------------------------------------------------------------
 
-(define fixnum-shift        2)
-(define fixnum-tag       #b00)
-(define fixnum-mask      #b11)
-(define char-shift          8)
-(define char-tag   #b00001111)
-(define char-mask  #b11111111)
-(define bool-shift          7)
-(define bool-t     #b10011111)
-(define bool-f     #b00011111)
-(define bool-tag    #b0011111)
-(define bool-mask   #b1111111)
-(define empty-list #b00101111)
-(define nil        empty-list)
+(define wordsize 8)
+(define fixnum-shift                      2)
+(define fixnum-tag                     #b00)
+(define fixnum-mask                    #b11)
+(define char-shift                        8)
+(define char-tag                 #b00001111)
+(define char-mask                #b11111111)
+(define bool-shift                        7)
+(define bool-t                   #b10011111)
+(define bool-f                   #b00011111)
+(define bool-tag                  #b0011111)
+(define bool-mask                 #b1111111)
+(define empty-list               #b00101111)
+(define nil                      empty-list)
+(define pair-tag                      #b001)
+(define pair-mask                     #b111)
+(define car-offset             (- pair-tag))
+(define cdr-offset    (- wordsize pair-tag))
+(define closure-tag                   #b010)
+(define vector-tag                    #b101)
+(define string-tag                    #b110)
+
 (define (emit . args)
   (display (apply format args))
   (newline))
 
+(define (last l)
+  (car (reverse l)))
+
+(define (butlast l)
+  (cdr (reverse l)))
+
 ;;;; Immediate values ----------------------------------------------------------------
 
-(define wordsize 8)
 (define fxbits (- (* wordsize 8) fixnum-shift))
 (define fxlower (- (expt 2 (- fxbits 1))))
 (define fxupper (sub1 (expt 2 (- fxbits 1))))
@@ -118,6 +133,61 @@
   (emit "  shr rax, ~s" char-shift)
   (emit "  shl rax, ~s" fixnum-shift))
 
+(define-primitive (not si env arg)
+  (emit-if si env #f (list 'if arg #f #t)))
+
+(define-primitive (fxlognot si env arg)
+  (emit-expr si env #f arg)
+  (emit "  or rax, ~s" fixnum-mask)
+  (emit "  not rax"))
+
+(define-primitive (car si env arg)
+  (emit-expr si env #f arg)
+  (emit "  mov rax, [rax - ~s]" pair-tag))
+
+(define-primitive (cdr si env arg)
+  (emit-expr si env #f arg)
+  (emit "  mov rax, [rax + ~s]" (-  wordsize pair-tag)))
+
+(define-primitive (cons si env left right)
+  ;; emit cdr
+  (emit-expr si env #f left)
+  (emit "  mov [rbp], rax")
+  ;; emit car
+  (emit-expr si env #f right)
+  (emit "  mov [rbp + ~s], rax" wordsize)
+  ;; move car's address into RAX
+  (emit "  mov rax, rbp ; RAX <- pair-addr")
+  (emit "  or rax, ~s ; tag with pair-tag" pair-tag)
+  (emit "  add rbp, ~s ; bump RBP by two words" (* wordsize 2)))
+
+(define-primitive (set-car! si env target val)
+  (emit-expr si env #f target)
+  (emit "  mov rbx, rax")
+  (emit-expr si env #f val)
+  (emit "  mov [rbx + ~s], rax" car-offset))
+
+(define-primitive (set-cdr! si env target val)
+  (emit-expr si env #f target)
+  (emit "  mov rbx, rax")
+  (emit-expr si env #f val)
+  (emit "  mov [rbx + ~s], rax" cdr-offset))
+
+;;FIXME: 2018-02-20 13:37
+;; (define-primitive (eq? si env left right)
+;;   (emit-expr si env #f left)
+;;   (emit "  mov rbx, rax")
+;;   (emit-expr si env #f right)
+;;   (emit "")
+;;   )
+
+(define-primitive (begin si env . args)
+  (let ([exprs (butlast args)]
+        [ret   (last args)])
+    ;; (printf "~%exprs: ~s~%ret: ~s~%" exprs ret)
+    (for-each (lambda (e) (emit-expr si env #f e)) exprs)
+    (emit-expr si env #f ret)))
+
 ;;; Many primitives are unary predicates which return true or false.
 ;;; This macro factors out some of the boilerplate for these predicates.
 ;;; To implement a new predicate, it is enough to emit assembly which
@@ -152,13 +222,9 @@
   (emit "  and rax, ~s" char-mask)
   (emit "  cmp rax, ~s" char-tag))
 
-(define-primitive (not si env arg)
-  (emit-if si env #f (list 'if arg #f #t)))
-
-(define-primitive (fxlognot si env arg)
-  (emit-expr si env #f arg)
-  (emit "  or rax, ~s" fixnum-mask)
-  (emit "  not rax"))
+(define-predicate (pair? si env arg)
+  (emit "  and rax, ~s" pair-mask)
+  (emit "  cmp rax, ~s" pair-tag))
 
 ;;;; Labels --------------------------------------------------------------------
 
@@ -296,6 +362,11 @@
                          (emit "~a: ; end label" end))])))]))
 
 (define-primitive-variadic-predicate (fx= si env . args)
+  (lambda (si env fail)
+    (emit "  cmp rax, [rsp - ~a]" si)
+    (emit "  jne ~a" fail)))
+
+(define-primitive-variadic-predicate (eq? si env . args)
   (lambda (si env fail)
     (emit "  cmp rax, [rsp - ~a]" si)
     (emit "  jne ~a" fail)))
@@ -481,6 +552,7 @@
 
 (define (emit-expr si env tail? expr)
   ;; TODO: rewrite with pattern-matching
+  ;; (printf "EMIT: ~s~%" expr)
   (cond [(immediate? expr) (emit-immediate tail? expr)]
         [(if? expr)        (emit-if si env tail? expr)]
         [(and? expr)       (emit-if si env tail? (transform-and expr))]
@@ -510,7 +582,6 @@
   (backup-registers)
   (emit "  mov rsp, rsi ; move stack base into rsp")
   (emit "  mov rbp, rdx ; move heap base into rbp")
-  (emit "  mov rsp, rsi")
   (emit "  call L_scheme_entry")
   (restore-registers)
   (emit "  ret")
