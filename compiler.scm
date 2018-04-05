@@ -26,11 +26,10 @@
 (define bool-mask                 #b1111111)
 (define empty-list               #b00101111)
 (define nil                      empty-list)
+(define obj-mask                      #b111)
 (define pair-tag                      #b001)
-(define pair-mask                     #b111)
 (define car-offset             (- pair-tag))
 (define cdr-offset    (- wordsize pair-tag))
-(define closure-tag                   #b010)
 (define vector-tag                    #b101)
 (define string-tag                    #b110)
 
@@ -173,13 +172,108 @@
   (emit-expr si env #f val)
   (emit "  mov [rbx + ~s], rax" cdr-offset))
 
-;;FIXME: 2018-02-20 13:37
-;; (define-primitive (eq? si env left right)
-;;   (emit-expr si env #f left)
-;;   (emit "  mov rbx, rax")
-;;   (emit-expr si env #f right)
-;;   (emit "")
-;;   )
+;;; Need to keep track of:
+;;;   - initial RBP si + w
+;;;   - init expression si + 3w
+;;;   - len si + 2w
+;;;
+(define-primitive (make-vector si env len init)
+  (let ([top-label   (unique-label "loop_top")]
+        [entry-label (unique-label "loop_entry")]
+        [rbp-pos     (+ si wordsize)]
+        [len-pos     (+ si (* 2 wordsize))]
+        [init-pos    (+ si (* 3 wordsize))])
+    (emit "  ;; making vector ~s ~s" len init)
+
+    ;; save RBP for return
+    (emit "  mov [rsp - ~s], rbp ; save RBP for later" rbp-pos)
+
+    ;; evaluate len expression
+    (emit-expr len-pos env #f len)
+    (emit "  mov [rsp - ~s], rax ; save len for loop ctr" len-pos)
+
+    ;; evaluate init expression
+    (emit-expr init-pos env #f init) ; now init is in RAX
+
+    ;; push vector-len into first position
+    (emit "  mov rbx, [rsp - ~s]  ; grab len" len-pos)
+    (emit "  mov qword [rbp], rbx ; stick (shifted) len in v->len")
+    (emit "  shr rbx, ~s           ; prepare unshifted len for loop" fixnum-shift)
+    (emit "  add rbp, ~s" wordsize)
+
+    ;;; place init expr into each slot in vector
+    (emit "  jmp ~a" entry-label)
+    (emit "~a:" top-label)
+    (emit "  mov qword [rbp], rax ; push init to vector")
+    (emit "  add rbp, ~s" wordsize)
+    (emit "  sub rbx, 1")
+    (emit "~a:" entry-label)
+    (emit "  cmp rbx, 0")
+    (emit "  jne ~a" top-label)
+
+    ;; return vector-tagged address
+    (emit "  mov rax, [rsp - ~s]" rbp-pos)
+    (emit "  or rax, ~s" vector-tag)
+    (emit "  ;; finished making vector ~s ~s" len init)))
+
+(define-primitive (vector-length si env vec)
+  (emit-expr si env #f vec)
+  (emit "  mov rax, [rax - ~s]" vector-tag))
+
+(define-primitive (vector-ref-unsafe si env vec idx)
+  (let ([idx-pos (+ si wordsize)]
+        [vec-pos (+ si (* 2 wordsize))])
+
+    (emit-expr idx-pos env #f idx)
+    (emit "  shr rax, ~s" fixnum-shift)
+    (emit "  imul rax, ~s ; each slot is ~s bytes" wordsize wordsize)
+    (emit "  mov [rsp - ~s], rax ; save idx for later" idx-pos)
+
+    (emit-expr vec-pos env #f vec)
+    (emit "  add rax, ~s ; bump pointer to v->buf[0]" (- wordsize vector-tag))
+    (emit "  add rax, [rsp - ~s] ; add idx to v's offset" idx-pos)
+    ;; grab `idx`'th element
+    (emit "  mov rax, [rax]")))
+
+(define-primitive (vector-set-unsafe! si env vec idx elem)
+  (let ([idx-pos  (+ si wordsize)]
+        [elem-pos (+ si (* 2 wordsize))]
+        [vec-pos  (+ si (* 3 wordsize))])
+
+    (emit-expr idx-pos env #f idx)
+    (emit "  shr rax, ~s" fixnum-shift)
+    (emit "  imul rax, ~s ; each slot is ~s bytes" wordsize wordsize)
+    (emit "  mov [rsp - ~s], rax ; save idx for later" idx-pos)
+
+    (emit-expr elem-pos env #f elem)
+    (emit "  mov [rsp - ~s], rax ; save elem for later" elem-pos)
+
+    (emit-expr vec-pos env #f vec)
+    (emit "  add rax, ~s ; bump pointer to v->buf[0]" (- wordsize vector-tag))
+    (emit "  add rax, [rsp - ~s] ; add idx to v's offset" idx-pos)
+    (emit "  mov rbx, [rsp - ~s] ; place elem in RBX" elem-pos)
+    (emit "  mov [rax], rbx ; set v->buf[i] to elem")))
+
+(define-primitive (vector-ref si env vec idx)
+  (emit-let
+   si
+   env
+   #f
+   `(let [v ,vec]
+      (if (fx< ,idx (vector-length v))
+          (vector-ref-unsafe v ,idx)
+          nil))))
+
+(define-primitive (vector-set! si env vec idx elem)
+  (emit-let
+   si
+   env
+   #f
+   `(let [v ,vec
+          i ,idx]
+      (if (fx< i (vector-length v))
+          (vector-set-unsafe! v i ,elem)
+          nil))))
 
 (define-primitive (begin si env . args)
   (let ([exprs (butlast args)]
@@ -223,8 +317,12 @@
   (emit "  cmp rax, ~s" char-tag))
 
 (define-predicate (pair? si env arg)
-  (emit "  and rax, ~s" pair-mask)
+  (emit "  and rax, ~s" obj-mask)
   (emit "  cmp rax, ~s" pair-tag))
+
+(define-predicate (vector? si env arg)
+  (emit "  and rax, ~s" obj-mask)
+  (emit "  cmp rax, ~s" vector-tag))
 
 ;;;; Labels --------------------------------------------------------------------
 
@@ -409,7 +507,7 @@
   (define (process-let bindings si new-env)
     (if (empty? bindings)
         (let ([tail-expr (car (reverse (cddr expr)))])
-          (for-each (lambda (exp) (if (equal? exp tail-expr) ; FIXME: I'm ugly
+          (for-each (lambda (exp) (if (equal? exp tail-expr) ; TODO: I'm ugly
                                       (emit-expr si new-env tail? exp)
                                       (emit-expr si new-env #f exp)))
                     (cddr expr)))
@@ -542,11 +640,11 @@
 
 (define (backup-registers)
   (preserve-registers (lambda (name num)
-                        (emit "  mov [rdi + ~a], ~s" num name))))
+                        (emit "  mov [rcx + ~a], ~s" num name))))
 
 (define (restore-registers)
   (preserve-registers (lambda (name num)
-                        (emit "  mov ~s, [rdi + ~a]" name num))))
+                        (emit "  mov ~s, [rcx + ~a]" name num))))
 
 ;;;; Compiler ----------------------------------------------------------------
 
@@ -579,6 +677,7 @@
   (emit-function-header "scheme_entry")
   (emit "  ; expect rdi <- &ctx,")
   (emit "  ; rsi <- stack_base, rdx <- heap_base")
+  (emit "  mov rcx, rdi")
   (backup-registers)
   (emit "  mov rsp, rsi ; move stack base into rsp")
   (emit "  mov rbp, rdx ; move heap base into rbp")

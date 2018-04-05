@@ -26,15 +26,16 @@
 // lists
 #define obj_mask     0x7  // 111
 #define pair_tag     0x01 // 001
-/* #define car_offset   (0 - pair_tag) // -1 */
-/* #define cdr_offset   (wordsize - pair_tag) // 7 */
-#define car_offset   -1
-#define cdr_offset   7
+#define car_offset   (0 - pair_tag) // -1
+#define cdr_offset   (wordsize - pair_tag) // 7
+#define vector_tag   0x05 // 101
 
 typedef long long scm_val;
 
-#define car(pair) (* (scm_val *) (pair + car_offset))
-#define cdr(pair) (* (scm_val *) (pair + cdr_offset))
+typedef struct {
+  scm_val length;
+  scm_val buf[1];
+} vector;
 
 #define empty_list   0x2F // 00101111
 const char *ascii_table[0x7F] = {
@@ -45,23 +46,17 @@ const char *ascii_table[0x7F] = {
   "space"
 };
 
-typedef uint8_t LEVEL;
+/* typedef uint8_t LEVEL; */
 
-static void prn(scm_val, LEVEL);
+static void prn(scm_val, int);
 
-static void prn_list(scm_val val, LEVEL level) {
-  /* printf("OK %d::1\n", level); */
-
-  scm_val car_ = *(scm_val*) (val + car_offset);
-  scm_val cdr_ = *(scm_val*) (val + cdr_offset);
-
-  /* printf("OK %d::2\n", level); */
-
+static void prn_list(scm_val val, int level) {
   if (level == 0) {
     printf("(");
   }
 
-  /* printf("OK %d::3\n", level); */
+  scm_val car_ = *(scm_val*) (val + car_offset);
+  scm_val cdr_ = *(scm_val*) (val + cdr_offset);
 
   prn(car_, level);
 
@@ -78,12 +73,30 @@ static void prn_list(scm_val val, LEVEL level) {
   }
 }
 
+static void prn_vector(scm_val val, int level) {
+  printf("#(");
+
+  // TODO: clean this up
+  vector* p = (vector*)(val - vector_tag);
+  int len = p->length >> fixnum_shift;
+  for (int i = 0; i < len; i++) {
+    if (i > 0) {
+      printf(" ");
+    }
+    prn(p->buf[i], level);
+  }
+
+  printf(")");
+}
+
 // TODO: clean up
-static void prn(scm_val val, LEVEL level){
+static void prn(scm_val val, int level){
   if((val & fixnum_mask) == fixnum_tag){
     printf("%lld", val >> fixnum_shift);
   } else if ((val & obj_mask) == pair_tag){
     prn_list(val, level);
+  } else if ((val & obj_mask) == vector_tag){
+    prn_vector(val, level);
   } else if (val == bool_t){
     printf("#t");
   } else if (val == bool_f){
