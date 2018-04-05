@@ -7,4 +7,6 @@
 (load "tests-driver.scm")
 
 ;; Run the tests
-(lloop-test)
+(ttest-all)
+
+(exit)

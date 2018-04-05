@@ -26,7 +26,7 @@
    "\033[30;1;106m"
    ))
 
-(define red "\033[30;1;41m")
+(define red "\033[30;0;41m")
 (define clear-style "\033[0m")
 
 (define (random-element list)
