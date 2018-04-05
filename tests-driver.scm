@@ -2,6 +2,9 @@
 
 (define cached-asm (make-eqv-hashtable 100))
 
+(define (flush-cache!)
+  (set! cached-asm (make-eqv-hashtable 100)))
+
 (define all-tests '())
 
 (define-syntax add-tests-with-string-output

@@ -1,14 +1,14 @@
 (load "util.scm")
 
-(load "tests-1.1-req.scm")
-(load "tests-1.2-req.scm")
-(load "tests-1.3-req.scm")
-(load "tests-1.4-req.scm")
-(load "tests-1.5-req.scm")
-(load "tests-1.6-req.scm")
-(load "tests-1.7-req.scm")
-(load "tests-1.8-req.scm")
 (load "tests-1.9-req.scm")
+(load "tests-1.8-req.scm")
+(load "tests-1.7-req.scm")
+(load "tests-1.6-req.scm")
+(load "tests-1.5-req.scm")
+(load "tests-1.4-req.scm")
+(load "tests-1.3-req.scm")
+(load "tests-1.2-req.scm")
+(load "tests-1.1-req.scm")
 
 ;;;; Helpers ----------------------------------------------------------------
 
@@ -43,6 +43,62 @@
 (define (butlast l)
   (cdr (reverse l)))
 
+(define reg-ret "rax")
+(define reg-stack-pointer "rsp")
+(define reg-base-pointer "rbp")
+(define reg-base-x "rbx")
+(define reg-ret-bit1 "al")
+(define reg-ctx "rcx")
+
+;; TODO: handle formatting operands
+(define (emit-bin-op operator opa opb)
+  (emit "  ~a ~a, ~a" operator opa opb))
+
+(define (emit-un-op operator op)
+  (emit "  ~a ~a" operator op))
+
+(define (emit-mov dest src)
+  (emit "  mov ~a, ~a" dest src))
+
+(define (emit-ret<- op . args)
+  (emit "  mov rax, ~a" (apply format op args)))
+
+(define (emit-ret-> op . args)
+  (emit "mov ~a, rax" (apply format op args)))
+
+(define (emit-val val)
+  (emit "  mov rax, ~s" val))
+
+(define (emit-return)
+  (emit "  ret"))
+
+(define (emit-stack-save si)
+  (emit "  mov qword [rsp - ~s], rax" si))
+
+(define (emit-stack-load si)
+  (emit "  mov rax, [rsp - ~s]" si))
+
+(define (emit-add-stack-offset offset)
+  (emit "  add rax, [rsp - ~s]" offset))
+
+(define (emit-heap-save offset)
+  (emit "  mov [rbp - ~a], rax" offset))
+
+(define (emit-heap-load offset)
+  (emit "  mov rax, [rbp - ~a]" offset))
+
+(define (emit-label lbl)
+  (emit "~a:" lbl))
+
+(define (reg+offset reg off)
+  (format "[~a + ~a]" reg off))
+
+(define (reg-offset reg off)
+  (format "[~a - ~a]" reg off))
+
+(define (reg-loc reg)
+  (format "[~a]" reg))
+
 ;;;; Immediate values ----------------------------------------------------------------
 
 (define fxbits (- (* wordsize 8) fixnum-shift))
@@ -68,8 +124,8 @@
            "Cannot find representation for this element: " x)]))
 
 (define (emit-immediate tail? x)
-  (emit "  mov rax, ~s" (immediate-rep x))
-  (if tail? (emit "  ret")))
+  (emit-val (immediate-rep x))
+  (if tail? (emit-return)))
 
 ;;;; Primitive calls ----------------------------------------------------------------
 
@@ -112,65 +168,65 @@
   (let [(prim (car expr)) (args (cdr expr))]
     (check-primcall-args prim args)
     (apply (primitive-emitter prim) si env args)
-    (if tail? (emit "  ret"))))
+    (if tail? (emit-return))))
 
 (define-primitive (fxadd1 si env arg)
   (emit-expr si env #f arg)
-  (emit "  add rax, ~s" (immediate-rep 1)))
+  (emit-bin-op 'add reg-ret (immediate-rep 1)))
 
 (define-primitive (fxsub1 si env arg)
   (emit-expr si env #f arg)
-  (emit "  sub rax, ~s" (immediate-rep 1)))
+  (emit-bin-op 'sub reg-ret (immediate-rep 1)))
 
 (define-primitive (fixnum->char si env arg)
   (emit-expr si env #f arg)
-  (emit "  shl rax, ~s" (- char-shift fixnum-shift))
-  (emit "  or rax, ~s" char-tag))
+  (emit-bin-op 'shl reg-ret (- char-shift fixnum-shift))
+  (emit-bin-op 'or reg-ret char-tag))
 
 (define-primitive (char->fixnum si env arg)
   (emit-expr si env #f arg)
-  (emit "  shr rax, ~s" char-shift)
-  (emit "  shl rax, ~s" fixnum-shift))
+  (emit-bin-op 'shr reg-ret char-shift)
+  (emit-bin-op 'shl reg-ret fixnum-shift))
 
 (define-primitive (not si env arg)
   (emit-if si env #f (list 'if arg #f #t)))
 
 (define-primitive (fxlognot si env arg)
   (emit-expr si env #f arg)
-  (emit "  or rax, ~s" fixnum-mask)
-  (emit "  not rax"))
+  (emit-bin-op 'or reg-ret fixnum-mask)
+  (emit-un-op 'not reg-ret))
 
 (define-primitive (car si env arg)
   (emit-expr si env #f arg)
-  (emit "  mov rax, [rax - ~s]" pair-tag))
+  (emit-ret<- "[rax - ~a]" pair-tag))
 
 (define-primitive (cdr si env arg)
   (emit-expr si env #f arg)
-  (emit "  mov rax, [rax + ~s]" (-  wordsize pair-tag)))
+  (emit-ret<- "[~a + ~a]" reg-ret (- wordsize pair-tag)))
 
 (define-primitive (cons si env left right)
   ;; emit cdr
   (emit-expr si env #f left)
-  (emit "  mov [rbp], rax")
+  (emit-ret-> "[rbp]")
   ;; emit car
   (emit-expr si env #f right)
-  (emit "  mov [rbp + ~s], rax" wordsize)
+  (emit-ret-> "[rbp + ~a]" wordsize)
   ;; move car's address into RAX
-  (emit "  mov rax, rbp ; RAX <- pair-addr")
-  (emit "  or rax, ~s ; tag with pair-tag" pair-tag)
-  (emit "  add rbp, ~s ; bump RBP by two words" (* wordsize 2)))
+  (emit-ret<- "rbp")
+  (emit-bin-op 'or reg-ret pair-tag)
+  (emit-bin-op 'add reg-base-pointer (* wordsize 2)))
 
 (define-primitive (set-car! si env target val)
   (emit-expr si env #f target)
-  (emit "  mov rbx, rax")
+  (emit-bin-op 'mov reg-base-x reg-ret)
   (emit-expr si env #f val)
-  (emit "  mov [rbx + ~s], rax" car-offset))
+  (emit-ret-> "[~a + ~a]" reg-base-x car-offset))
 
 (define-primitive (set-cdr! si env target val)
   (emit-expr si env #f target)
-  (emit "  mov rbx, rax")
+  (emit-ret-> reg-base-x)
   (emit-expr si env #f val)
-  (emit "  mov [rbx + ~s], rax" cdr-offset))
+  (emit-ret-> "[~a + ~a]" reg-base-x cdr-offset))
 
 ;;; Need to keep track of:
 ;;;   - initial RBP si + w
@@ -186,54 +242,64 @@
     (emit "  ;; making vector ~s ~s" len init)
 
     ;; save RBP for return
-    (emit "  mov [rsp - ~s], rbp ; save RBP for later" rbp-pos)
+    ;; TODO: abstract (fmt "[~a - ~a]" x y) pattern?
+    (emit-mov (reg-offset reg-stack-pointer rbp-pos)
+              reg-base-pointer)
 
     ;; evaluate len expression
     (emit-expr len-pos env #f len)
-    (emit "  mov [rsp - ~s], rax ; save len for loop ctr" len-pos)
+    (emit-stack-save len-pos)
 
     ;; evaluate init expression
     (emit-expr init-pos env #f init) ; now init is in RAX
 
     ;; push vector-len into first position
-    (emit "  mov rbx, [rsp - ~s]  ; grab len" len-pos)
-    (emit "  mov qword [rbp], rbx ; stick (shifted) len in v->len")
-    (emit "  shr rbx, ~s           ; prepare unshifted len for loop" fixnum-shift)
-    (emit "  add rbp, ~s" wordsize)
+    (emit-mov reg-base-x
+              (reg-offset reg-stack-pointer len-pos))
+    (emit-mov (reg-loc reg-base-pointer)
+              reg-base-x)
+    (emit-bin-op 'shr reg-base-x fixnum-shift)
+    (emit-bin-op 'add reg-base-pointer wordsize)
 
     ;;; place init expr into each slot in vector
-    (emit "  jmp ~a" entry-label)
-    (emit "~a:" top-label)
-    (emit "  mov qword [rbp], rax ; push init to vector")
-    (emit "  add rbp, ~s" wordsize)
-    (emit "  sub rbx, 1")
-    (emit "~a:" entry-label)
-    (emit "  cmp rbx, 0")
-    (emit "  jne ~a" top-label)
+    ;; TODO: abstract out looping
+    (emit-un-op 'jmp entry-label)
+    (emit-label top-label)
+    (emit-heap-save 0)
+    (emit-bin-op 'add reg-base-pointer wordsize)
+    (emit-bin-op 'sub reg-base-x 1)
+    (emit-label entry-label)
+    (emit-bin-op 'cmp reg-base-x 0)
+    (emit-un-op 'jne top-label)
 
     ;; return vector-tagged address
-    (emit "  mov rax, [rsp - ~s]" rbp-pos)
-    (emit "  or rax, ~s" vector-tag)
+    (emit-stack-load rbp-pos)
+    (emit-bin-op 'or reg-ret vector-tag)
     (emit "  ;; finished making vector ~s ~s" len init)))
 
 (define-primitive (vector-length si env vec)
   (emit-expr si env #f vec)
-  (emit "  mov rax, [rax - ~s]" vector-tag))
+  (emit-mov reg-ret (reg-offset reg-ret vector-tag)))
 
 (define-primitive (vector-ref-unsafe si env vec idx)
   (let ([idx-pos (+ si wordsize)]
         [vec-pos (+ si (* 2 wordsize))])
 
+    ;; TODO: what is going on here?
+    ;; try duplicating some of these instructions
+    ;; and be amazed
     (emit-expr idx-pos env #f idx)
-    (emit "  shr rax, ~s" fixnum-shift)
-    (emit "  imul rax, ~s ; each slot is ~s bytes" wordsize wordsize)
-    (emit "  mov [rsp - ~s], rax ; save idx for later" idx-pos)
+    (emit-bin-op 'shr reg-ret fixnum-shift)
+    ;; (emit-bin-op 'shr reg-ret fixnum-shift)
+    ;; ...
+    (emit-bin-op 'imul reg-ret wordsize)
+    (emit-stack-save idx-pos)
 
     (emit-expr vec-pos env #f vec)
-    (emit "  add rax, ~s ; bump pointer to v->buf[0]" (- wordsize vector-tag))
-    (emit "  add rax, [rsp - ~s] ; add idx to v's offset" idx-pos)
+    (emit-bin-op 'add reg-ret (- wordsize vector-tag))
+    (emit-add-stack-offset idx-pos)
     ;; grab `idx`'th element
-    (emit "  mov rax, [rax]")))
+    (emit-mov reg-ret (fmt "[~a]" reg-ret))))
 
 (define-primitive (vector-set-unsafe! si env vec idx elem)
   (let ([idx-pos  (+ si wordsize)]
@@ -241,18 +307,18 @@
         [vec-pos  (+ si (* 3 wordsize))])
 
     (emit-expr idx-pos env #f idx)
-    (emit "  shr rax, ~s" fixnum-shift)
-    (emit "  imul rax, ~s ; each slot is ~s bytes" wordsize wordsize)
-    (emit "  mov [rsp - ~s], rax ; save idx for later" idx-pos)
+    (emit-bin-op 'shr reg-ret fixnum-shift)
+    (emit-bin-op 'imul reg-ret wordsize)
+    (emit-stack-save idx-pos)
 
     (emit-expr elem-pos env #f elem)
-    (emit "  mov [rsp - ~s], rax ; save elem for later" elem-pos)
+    (emit-stack-save elem-pos)
 
     (emit-expr vec-pos env #f vec)
-    (emit "  add rax, ~s ; bump pointer to v->buf[0]" (- wordsize vector-tag))
-    (emit "  add rax, [rsp - ~s] ; add idx to v's offset" idx-pos)
-    (emit "  mov rbx, [rsp - ~s] ; place elem in RBX" elem-pos)
-    (emit "  mov [rax], rbx ; set v->buf[i] to elem")))
+    (emit-bin-op 'add reg-ret (- wordsize vector-tag))
+    (emit-add-stack-offset idx-pos)
+    (emit-mov reg-base-x (fmt "[~a - ~a]" reg-stack-pointer elem-pos))
+    (emit-mov (reg-loc reg-ret) reg-base-x)))
 
 (define-primitive (vector-ref si env vec idx)
   (emit-let
@@ -294,35 +360,35 @@
      (define-primitive (prim-name si env arg)
        (emit-expr si env #f arg)
        b* ...
-       (emit "  setz al")
-       (emit "  movzx rax, al")
-       (emit "  shl rax, ~s" bool-shift)
-       (emit "  or rax, ~s ; end predicate" bool-tag))]))
+       (emit-un-op 'setz reg-ret-bit1)
+       (emit-bin-op 'movzx reg-ret reg-ret-bit1)
+       (emit-bin-op 'shl reg-ret bool-shift)
+       (emit-bin-op 'or reg-ret bool-tag))]))
 
 (define-predicate (fixnum? si env arg)
-  (emit "  and rax, ~s" fixnum-mask))
+  (emit-bin-op 'and reg-ret fixnum-mask))
 
 (define-predicate (fxzero? si env arg)
-  (emit "  cmp rax, ~s" fixnum-tag))
+  (emit-bin-op 'cmp reg-ret fixnum-tag))
 
 (define-predicate (null? si env arg)
-  (emit "  cmp rax, ~s" empty-list))
+  (emit-bin-op 'cmp reg-ret empty-list))
 
 (define-predicate (boolean? si env arg)
-  (emit "  and rax, ~s" bool-mask)
-  (emit "  cmp rax, ~s" bool-tag))
+  (emit-bin-op 'and reg-ret bool-mask)
+  (emit-bin-op 'cmp reg-ret bool-tag))
 
 (define-predicate (char? si env arg)
-  (emit "  and rax, ~s" char-mask)
-  (emit "  cmp rax, ~s" char-tag))
+  (emit-bin-op 'and reg-ret char-mask)
+  (emit-bin-op 'cmp reg-ret char-tag))
 
 (define-predicate (pair? si env arg)
-  (emit "  and rax, ~s" obj-mask)
-  (emit "  cmp rax, ~s" pair-tag))
+  (emit-bin-op 'and reg-ret obj-mask)
+  (emit-bin-op 'cmp reg-ret pair-tag))
 
 (define-predicate (vector? si env arg)
-  (emit "  and rax, ~s" obj-mask)
-  (emit "  cmp rax, ~s" vector-tag))
+  (emit-bin-op 'and reg-ret obj-mask)
+  (emit-bin-op 'cmp reg-ret vector-tag))
 
 ;;;; Labels --------------------------------------------------------------------
 
@@ -351,15 +417,15 @@
         [alt-label (unique-label "alt")]
         [end-label (unique-label "end")])
     (emit-expr si env #f test)
-    (emit "  cmp rax, ~s ; cmp #f" bool-f)
-    (emit "  je ~a" alt-label)
-    (emit "  cmp rax, ~s ; cmp ()" nil)
-    (emit "  je ~a" alt-label)
+    (emit-bin-op 'cmp reg-ret bool-f)
+    (emit-un-op 'je alt-label)
+    (emit-bin-op 'cmp reg-ret nil)
+    (emit-un-op 'je alt-label)
     (emit-expr si env tail? consequent)
-    (emit "  jmp ~a" end-label)
-    (emit "~a: ; alt" alt-label)
+    (emit-un-op 'jmp end-label)
+    (emit-label alt-label)
     (emit-expr si env tail? alternate)
-    (emit "~a: ; end" end-label)))
+    (emit-label end-label)))
 
 ;;;; And form ----------------------------------------------------------------
 
@@ -394,7 +460,8 @@
     (unless (null? args)
       (emit-expr offset env #f (car args))
       (unless (null? (cdr args))
-        (emit "  mov [rsp - ~a], rax" offset))
+        (emit-mov (fmt "[~a - ~a]" reg-stack-pointer offset)
+                  reg-ret))
       (loop (+ offset wordsize) (cdr args)))))
 
 (define (reduce-stack si env n rf fail)
@@ -413,7 +480,7 @@
        (let ([rev (reverse args)]
              [len (length args)])
          (cond
-          [(eq? len 0) (emit "  mov rax, ~s" (immediate-rep init))]
+          [(eq? len 0) (emit-mov reg-ret (immediate-rep init))]
           [(eq? len 1) (emit-expr si env #t (car args))]
           [else        (begin
                          (emit "  ; emitting build on stack (si: ~s)" si)
@@ -421,21 +488,28 @@
                          (reduce-stack si env (sub1 len) rf nil))])))]))
 
 (define-primitive-reduction (fx+ si env . args)
-  (lambda (si env fail) (emit "  add rax, [rsp - ~a]" si)) 0)
+  (lambda (si env fail) (emit-add-stack-offset si)) 0)
 
 (define-primitive-reduction (fx- si env . args)
-  (lambda (si env fail) (emit "  sub rax, [rsp - ~a]" si)) 0)
+  (lambda (si env fail)
+    (emit-bin-op 'sub reg-ret (reg-offset reg-stack-pointer si)))
+  0)
 
 (define-primitive-reduction (fx* si env . args)
   (lambda (si env fail)
-    (emit "  shr rax, 2")
-    (emit "  imul rax, [rsp - ~a]" si)) 1)
+    (emit-bin-op 'shr reg-ret fixnum-shift)
+    (emit-bin-op 'imul reg-ret (reg-offset reg-stack-pointer si)))
+  1)
 
 (define-primitive-reduction (fxlogor si env . args)
-  (lambda (si env fail) (emit "  or rax, [rsp - ~a]" si)) 0)
+  (lambda (si env fail)
+    (emit-bin-op 'or reg-ret (reg-offset reg-stack-pointer si)))
+  0)
 
 (define-primitive-reduction (fxlogand si env . args)
-  (lambda (si env fail) (emit "  and rax, [rsp - ~a]" si)) 0)
+  (lambda (si env fail)
+    (emit-bin-op 'and reg-ret (reg-offset reg-stack-pointer si)))
+  0)
 
 (define-syntax define-primitive-variadic-predicate
   (syntax-rules ()
@@ -452,43 +526,41 @@
           [else        (begin
                          (build-on-stack si env rev)
                          (reduce-stack si env (sub1 len) rf fail)
-                         ;; if control reaches this point, args are equal
-                         (emit "  mov rax, ~s" bool-t)
-                         (emit " jmp ~a" end)
-                         (emit "~a: ; not= label" fail)
-                         (emit "  mov rax, ~s" bool-f)
-                         (emit "~a: ; end label" end))])))]))
+                         (emit-mov reg-ret bool-t)
+                         (emit-un-op 'jmp end)
+                         (emit-label fail)
+                         (emit-mov reg-ret bool-f)
+                         (emit-label end))])))]))
 
 (define-primitive-variadic-predicate (fx= si env . args)
   (lambda (si env fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jne ~a" fail)))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-un-op 'jne fail)))
 
 (define-primitive-variadic-predicate (eq? si env . args)
   (lambda (si env fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jne ~a" fail)))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-un-op 'jne fail)))
 
 (define-primitive-variadic-predicate (fx< si env . args)
   (lambda (si env fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jnl ~a" fail)))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-un-op 'jnl fail)))
 
 (define-primitive-variadic-predicate (fx<= si env . args)
   (lambda (si env fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jnle ~a" fail)))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-un-op 'jnle fail)))
 
 (define-primitive-variadic-predicate (fx> si env . args)
   (lambda (si env fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jng ~a" fail)))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-un-op 'jng fail)))
 
 (define-primitive-variadic-predicate (fx>= si env . args)
   (lambda (si env fail)
-    (emit "  cmp rax, [rsp - ~a]" si)
-    (emit "  jnge ~a" fail)))
-
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-un-op 'jnge fail)))
 
 ;;;; Let bindings ----------------------------------------------------------------
 ;;; Can't I desugar these into lambdas?
@@ -496,9 +568,6 @@
 
 (define (let? expr)
   (and (pair? expr) (equal? (car expr) 'let)))
-
-(define (emit-stack-save si)
-  (emit "  mov [rsp - ~s], rax" si))
 
 (define (extend-env sym si env)
   (cons (cons sym si) env))
@@ -523,16 +592,15 @@
 (define (variable? expr)
   (symbol? expr))
 
+(variable? 'foo)
+
 (define (lookup sym env)
   (cdr (assoc sym env)))
-
-(define (emit-stack-load si)
-  (emit "  mov rax, [rsp - ~s]" si))
 
 (define (emit-variable-ref env tail? sym)
   (cond [(lookup sym env) => emit-stack-load]
         [else (errorf 'emit-variable-ref "Symbol: ~s is unbound" sym)])
-  (if tail? (emit "  ret")))
+  (if tail? (emit-return)))
 
 ;;;; Letrec (lambdas) ----------------------------------------------------------------
 
@@ -591,27 +659,26 @@
     (let loop ([x n]
                [offset wordsize])
       (unless (zero? x)
-        (emit "  mov rax, [rsp - ~s]" (+ offset shift))
-        (emit "  mov [rsp - ~s], rax" offset)
+        (emit-stack-load (+ offset shift))
+        (emit-stack-save offset)
         (loop (sub1 x) (+ offset wordsize))))))
 
 (define (emit-app si env tail? expr)
   (define (emit-arguments si args)
     (unless (empty? args)
       (emit-expr si env #f (car args))
-      (emit "  mov [rsp - ~s], rax ; passing arg to ~s" si (car expr))
+      (emit-stack-save si)
       (emit-arguments (+ si wordsize) (cdr args))))
-  (emit "  ; si is ~s" si)
   (let* ([args (cdr expr)]
          [base (+ si (* 2 wordsize))])
     (emit "  ; --------------------------------- emitting args before app call <<*>>")
     (emit-arguments base args)
     (if tail?
         (begin (shift-stack-frame-down si (length args))
-               (emit "  jmp ~a ; app call" (lookup (car expr) env)))
-        (begin (emit "  sub rsp, ~s" si)
-               (emit "  call ~a ; app call" (lookup (car expr) env))
-               (emit "  add rsp, ~s" si)))))
+               (emit-un-op 'jmp (lookup (car expr) env)))
+        (begin (emit-bin-op 'sub reg-stack-pointer si)
+               (emit-un-op 'call (lookup (car expr) env))
+               (emit-bin-op 'add reg-stack-pointer si)))))
 
 ;;;; Context-switch ----------------------------------------------------------------
 
@@ -640,11 +707,11 @@
 
 (define (backup-registers)
   (preserve-registers (lambda (name num)
-                        (emit "  mov [rcx + ~a], ~s" num name))))
+                        (emit-mov (reg+offset reg-ctx num) name))))
 
 (define (restore-registers)
   (preserve-registers (lambda (name num)
-                        (emit "  mov ~s, [rcx + ~a]" name num))))
+                        (emit-mov name (reg+offset reg-ctx num)))))
 
 ;;;; Compiler ----------------------------------------------------------------
 
@@ -668,21 +735,22 @@
 
 (define (emit-function-header name)
   (emit "global ~a" name)
-  (emit "~a:" name))
+  (emit-label name))
 
 (define (emit-program expr)
   (set! user-lambdas '()) ; clear from previous invocations
-  (emit-function-header "L_scheme_entry")
+  (emit-function-header 'L_scheme_entry)
   (emit-expr 0 '() #t expr)
   (emit-function-header "scheme_entry")
   (emit "  ; expect rdi <- &ctx,")
   (emit "  ; rsi <- stack_base, rdx <- heap_base")
-  (emit "  mov rcx, rdi")
+  ;; TODO: look up register purposes and name them better
+  (emit-mov reg-ctx 'rdi) ;<<<
   (backup-registers)
-  (emit "  mov rsp, rsi ; move stack base into rsp")
-  (emit "  mov rbp, rdx ; move heap base into rbp")
-  (emit "  call L_scheme_entry")
+  (emit-mov reg-stack-pointer 'rsi) ;<<<
+  (emit-mov reg-base-pointer 'rdx) ;<<<
+  (emit-un-op 'call 'L_scheme_entry)
   (restore-registers)
-  (emit "  ret")
+  (emit-return)
   (for-each (lambda (emitter) (emitter))
             user-lambdas))

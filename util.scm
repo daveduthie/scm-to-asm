@@ -1,7 +1,6 @@
 (define (empty? lst)
   (eq? lst '()))
 
-
 (define colours
   (list
    "\033[0m"

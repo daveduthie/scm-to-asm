@@ -1,0 +1,7 @@
+settings set target.x86-disassembly-flavor intel
+target stop-hook add --one-liner "register read"
+# target stop-hook add --one-liner "memory read --size 8 --format d --count 10 0x100301000"
+# breakpoint set -n L_scheme_entry
+# breakpoint set -n scheme_entry
+breakpoint set -n main
+run
