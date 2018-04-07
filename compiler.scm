@@ -43,14 +43,13 @@
 (define (butlast l)
   (cdr (reverse l)))
 
-(define reg-ret "rax")
-(define reg-stack-pointer "rsp")
-(define reg-base-pointer "rbp")
-(define reg-base-x "rbx")
-(define reg-ret-bit1 "al")
+(define reg-ret "rax") ; return register
+(define reg-sp "rsp") ; stack base
+(define reg-bp "rbp") ; heap base
+(define reg-bx "rbx") ; TODO: used for what?
+(define reg-ret-bit1 "al") ; low bit of return reg
 (define reg-ctx "rcx")
 
-;; TODO: handle formatting operands
 (define (emit-bin-op operator opa opb)
   (emit "  ~a ~a, ~a" operator opa opb))
 
@@ -78,6 +77,7 @@
 (define (emit-stack-load si)
   (emit "  mov rax, [rsp - ~s]" si))
 
+;; TODO: this abstraction sucks!
 (define (emit-add-stack-offset offset)
   (emit "  add rax, [rsp - ~s]" offset))
 
@@ -214,19 +214,19 @@
   ;; move car's address into RAX
   (emit-ret<- "rbp")
   (emit-bin-op 'or reg-ret pair-tag)
-  (emit-bin-op 'add reg-base-pointer (* wordsize 2)))
+  (emit-bin-op 'add reg-bp (* wordsize 2)))
 
 (define-primitive (set-car! si env target val)
   (emit-expr si env #f target)
-  (emit-bin-op 'mov reg-base-x reg-ret)
+  (emit-bin-op 'mov reg-bx reg-ret)
   (emit-expr si env #f val)
-  (emit-ret-> "[~a + ~a]" reg-base-x car-offset))
+  (emit-ret-> "[~a + ~a]" reg-bx car-offset))
 
 (define-primitive (set-cdr! si env target val)
   (emit-expr si env #f target)
-  (emit-ret-> reg-base-x)
+  (emit-ret-> reg-bx)
   (emit-expr si env #f val)
-  (emit-ret-> "[~a + ~a]" reg-base-x cdr-offset))
+  (emit-ret-> "[~a + ~a]" reg-bx cdr-offset))
 
 ;;; Need to keep track of:
 ;;;   - initial RBP si + w
@@ -242,9 +242,8 @@
     (emit "  ;; making vector ~s ~s" len init)
 
     ;; save RBP for return
-    ;; TODO: abstract (fmt "[~a - ~a]" x y) pattern?
-    (emit-mov (reg-offset reg-stack-pointer rbp-pos)
-              reg-base-pointer)
+    (emit-mov (reg-offset reg-sp rbp-pos)
+              reg-bp)
 
     ;; evaluate len expression
     (emit-expr len-pos env #f len)
@@ -254,22 +253,22 @@
     (emit-expr init-pos env #f init) ; now init is in RAX
 
     ;; push vector-len into first position
-    (emit-mov reg-base-x
-              (reg-offset reg-stack-pointer len-pos))
-    (emit-mov (reg-loc reg-base-pointer)
-              reg-base-x)
-    (emit-bin-op 'shr reg-base-x fixnum-shift)
-    (emit-bin-op 'add reg-base-pointer wordsize)
+    (emit-mov reg-bx
+              (reg-offset reg-sp len-pos))
+    (emit-mov (reg-loc reg-bp)
+              reg-bx)
+    (emit-bin-op 'shr reg-bx fixnum-shift)
+    (emit-bin-op 'add reg-bp wordsize)
 
     ;;; place init expr into each slot in vector
     ;; TODO: abstract out looping
     (emit-un-op 'jmp entry-label)
     (emit-label top-label)
     (emit-heap-save 0)
-    (emit-bin-op 'add reg-base-pointer wordsize)
-    (emit-bin-op 'sub reg-base-x 1)
+    (emit-bin-op 'add reg-bp wordsize)
+    (emit-bin-op 'sub reg-bx 1)
     (emit-label entry-label)
-    (emit-bin-op 'cmp reg-base-x 0)
+    (emit-bin-op 'cmp reg-bx 0)
     (emit-un-op 'jne top-label)
 
     ;; return vector-tagged address
@@ -299,7 +298,7 @@
     (emit-bin-op 'add reg-ret (- wordsize vector-tag))
     (emit-add-stack-offset idx-pos)
     ;; grab `idx`'th element
-    (emit-mov reg-ret (fmt "[~a]" reg-ret))))
+    (emit-mov reg-ret (reg-loc reg-ret))))
 
 (define-primitive (vector-set-unsafe! si env vec idx elem)
   (let ([idx-pos  (+ si wordsize)]
@@ -317,8 +316,8 @@
     (emit-expr vec-pos env #f vec)
     (emit-bin-op 'add reg-ret (- wordsize vector-tag))
     (emit-add-stack-offset idx-pos)
-    (emit-mov reg-base-x (fmt "[~a - ~a]" reg-stack-pointer elem-pos))
-    (emit-mov (reg-loc reg-ret) reg-base-x)))
+    (emit-mov reg-bx (reg-offset reg-sp elem-pos))
+    (emit-mov (reg-loc reg-ret) reg-bx)))
 
 (define-primitive (vector-ref si env vec idx)
   (emit-let
@@ -460,7 +459,7 @@
     (unless (null? args)
       (emit-expr offset env #f (car args))
       (unless (null? (cdr args))
-        (emit-mov (fmt "[~a - ~a]" reg-stack-pointer offset)
+        (emit-mov (reg-offset reg-sp offset)
                   reg-ret))
       (loop (+ offset wordsize) (cdr args)))))
 
@@ -492,23 +491,23 @@
 
 (define-primitive-reduction (fx- si env . args)
   (lambda (si env fail)
-    (emit-bin-op 'sub reg-ret (reg-offset reg-stack-pointer si)))
+    (emit-bin-op 'sub reg-ret (reg-offset reg-sp si)))
   0)
 
 (define-primitive-reduction (fx* si env . args)
   (lambda (si env fail)
     (emit-bin-op 'shr reg-ret fixnum-shift)
-    (emit-bin-op 'imul reg-ret (reg-offset reg-stack-pointer si)))
+    (emit-bin-op 'imul reg-ret (reg-offset reg-sp si)))
   1)
 
 (define-primitive-reduction (fxlogor si env . args)
   (lambda (si env fail)
-    (emit-bin-op 'or reg-ret (reg-offset reg-stack-pointer si)))
+    (emit-bin-op 'or reg-ret (reg-offset reg-sp si)))
   0)
 
 (define-primitive-reduction (fxlogand si env . args)
   (lambda (si env fail)
-    (emit-bin-op 'and reg-ret (reg-offset reg-stack-pointer si)))
+    (emit-bin-op 'and reg-ret (reg-offset reg-sp si)))
   0)
 
 (define-syntax define-primitive-variadic-predicate
@@ -534,32 +533,32 @@
 
 (define-primitive-variadic-predicate (fx= si env . args)
   (lambda (si env fail)
-    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-sp si))
     (emit-un-op 'jne fail)))
 
 (define-primitive-variadic-predicate (eq? si env . args)
   (lambda (si env fail)
-    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-sp si))
     (emit-un-op 'jne fail)))
 
 (define-primitive-variadic-predicate (fx< si env . args)
   (lambda (si env fail)
-    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-sp si))
     (emit-un-op 'jnl fail)))
 
 (define-primitive-variadic-predicate (fx<= si env . args)
   (lambda (si env fail)
-    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-sp si))
     (emit-un-op 'jnle fail)))
 
 (define-primitive-variadic-predicate (fx> si env . args)
   (lambda (si env fail)
-    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-sp si))
     (emit-un-op 'jng fail)))
 
 (define-primitive-variadic-predicate (fx>= si env . args)
   (lambda (si env fail)
-    (emit-bin-op 'cmp reg-ret (reg-offset reg-stack-pointer si))
+    (emit-bin-op 'cmp reg-ret (reg-offset reg-sp si))
     (emit-un-op 'jnge fail)))
 
 ;;;; Let bindings ----------------------------------------------------------------
@@ -676,9 +675,9 @@
     (if tail?
         (begin (shift-stack-frame-down si (length args))
                (emit-un-op 'jmp (lookup (car expr) env)))
-        (begin (emit-bin-op 'sub reg-stack-pointer si)
+        (begin (emit-bin-op 'sub reg-sp si)
                (emit-un-op 'call (lookup (car expr) env))
-               (emit-bin-op 'add reg-stack-pointer si)))))
+               (emit-bin-op 'add reg-sp si)))))
 
 ;;;; Context-switch ----------------------------------------------------------------
 
@@ -744,11 +743,10 @@
   (emit-function-header "scheme_entry")
   (emit "  ; expect rdi <- &ctx,")
   (emit "  ; rsi <- stack_base, rdx <- heap_base")
-  ;; TODO: look up register purposes and name them better
-  (emit-mov reg-ctx 'rdi) ;<<<
+  (emit-mov reg-ctx 'rdi) ;<<< first arg
   (backup-registers)
-  (emit-mov reg-stack-pointer 'rsi) ;<<<
-  (emit-mov reg-base-pointer 'rdx) ;<<<
+  (emit-mov reg-sp 'rsi) ;<<< second arg
+  (emit-mov reg-bp 'rdx) ;<<< third arg
   (emit-un-op 'call 'L_scheme_entry)
   (restore-registers)
   (emit-return)
