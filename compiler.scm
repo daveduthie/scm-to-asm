@@ -198,21 +198,21 @@
 
 (define-primitive (car si env arg)
   (emit-expr si env #f arg)
-  (emit-ret<- "[rax - ~a]" pair-tag))
+  (emit-ret<- (reg-offset reg-ret pair-tag)))
 
 (define-primitive (cdr si env arg)
   (emit-expr si env #f arg)
-  (emit-ret<- "[~a + ~a]" reg-ret (- wordsize pair-tag)))
+  (emit-ret<- (reg+offset reg-ret (- wordsize pair-tag))))
 
 (define-primitive (cons si env left right)
   ;; emit cdr
   (emit-expr si env #f left)
-  (emit-ret-> "[rbp]")
+  (emit-ret-> (reg-loc reg-bp))
   ;; emit car
   (emit-expr si env #f right)
-  (emit-ret-> "[rbp + ~a]" wordsize)
+  (emit-ret-> (reg+offset reg-bp wordsize))
   ;; move car's address into RAX
-  (emit-ret<- "rbp")
+  (emit-ret<- reg-bp)
   (emit-bin-op 'or reg-ret pair-tag)
   (emit-bin-op 'add reg-bp (* wordsize 2)))
 
@@ -220,13 +220,13 @@
   (emit-expr si env #f target)
   (emit-bin-op 'mov reg-bx reg-ret)
   (emit-expr si env #f val)
-  (emit-ret-> "[~a + ~a]" reg-bx car-offset))
+  (emit-ret-> (reg+offset reg-bx car-offset)))
 
 (define-primitive (set-cdr! si env target val)
   (emit-expr si env #f target)
   (emit-ret-> reg-bx)
   (emit-expr si env #f val)
-  (emit-ret-> "[~a + ~a]" reg-bx cdr-offset))
+  (emit-ret-> (reg+offset reg-bx cdr-offset)))
 
 ;;; Need to keep track of:
 ;;;   - initial RBP si + w
@@ -343,7 +343,6 @@
 (define-primitive (begin si env . args)
   (let ([exprs (butlast args)]
         [ret   (last args)])
-    ;; (printf "~%exprs: ~s~%ret: ~s~%" exprs ret)
     (for-each (lambda (e) (emit-expr si env #f e)) exprs)
     (emit-expr si env #f ret)))
 
@@ -443,14 +442,14 @@
 
 ;;;; Or form ----------------------------------------------------------------
 
+(define (or? expr)
+  (and (pair? expr) (equal? (car expr) 'or)))
+
 (define (transform-or expr)
   (let alternate ([i (cdr expr)])
     (if (null? i)
         #f
         `(if ,(car i) #t ,(alternate (cdr i))))))
-
-(define (or? expr)
-  (and (pair? expr) (equal? (car expr) 'or)))
 
 ;;;; Higher-arity primitives ----------------------------------------------------------------
 
@@ -487,7 +486,9 @@
                          (reduce-stack si env (sub1 len) rf nil))])))]))
 
 (define-primitive-reduction (fx+ si env . args)
-  (lambda (si env fail) (emit-add-stack-offset si)) 0)
+  (lambda (si env fail)
+    (emit-bin-op 'add reg-ret (reg-offset reg-sp si)))
+  0)
 
 (define-primitive-reduction (fx- si env . args)
   (lambda (si env fail)
